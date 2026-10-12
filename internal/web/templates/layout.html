@@ -1,0 +1,16 @@
+{{define "layout"}}<!doctype html>
+<html lang="en" data-theme="dark">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · TokenCrypt</title>
+<link rel="stylesheet" href="/static/pico.min.css"><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/app.css">{{if .Authenticated}}<script src="/static/countdown.js" defer></script><script src="/static/expiry.js" defer></script>{{end}}</head>
+<body><header><a class="brand" href="/">TokenCrypt</a>{{if .Authenticated}}<nav aria-label="Sections"><a href="/secrets" {{if eq .Section "secrets"}}aria-current="page"{{end}}>Secrets</a><a href="/grants" {{if eq .Section "grants"}}aria-current="page"{{end}}>Grants</a><a href="/requests" {{if eq .Section "requests"}}aria-current="page"{{end}}>Requests</a><a href="/notifier" {{if eq .Section "notifier"}}aria-current="page"{{end}}>Notifier</a><a href="/unlock" {{if eq .Section "unlock"}}aria-current="page"{{end}}>Unlock</a><a href="/audit" {{if eq .Section "audit"}}aria-current="page"{{end}}>Audit</a></nav><form class="inline" method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">Logout</button></form>{{end}}</header>
+<main>{{if .Message}}<p class="flash flash-success" role="status">{{.Message}}</p>{{end}}{{if .Error}}<p class="flash flash-error" role="alert">{{.Error}}</p>{{end}}{{template "content" .}}</main>
+</body></html>{{end}}
+{{define "csrf"}}<input type="hidden" name="csrf" value="{{.CSRF}}">{{end}}
+{{define "passphrase"}}<label>Vault passphrase<input type="password" name="passphrase" autocomplete="current-password" maxlength="4096" required></label>{{end}}
+{{define "duration"}}<label>Access duration<select name="duration">{{range .Choices}}<option value="{{.Value}}">{{.Label}}</option>{{end}}</select></label><p class="notice">Grants longer than 24 hours give the agent access for the whole period. Revoke access sooner from the Grants page.</p>{{end}}
+
+{{define "expiry"}}<div data-expiry-form><label>Token expiry<select name="expiry_choice">{{range .ExpiryChoices}}<option value="{{.Value}}"{{if eq .Value $.ExpiryChoice}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
+<label>Expiry date<input type="date" name="expires_on" value="{{.ExpiryDate}}" min="0001-01-01" max="9999-12-31"></label><input type="hidden" name="expiry_today" value="">
+<small>Informational only. Valid through the selected date in your local calendar. Agent access is controlled by grants.</small></div>{{end}}
+{{define "token-expiry"}}{{if .ExpiresOn}}<time datetime="{{.ExpiresOn}}">{{expiryDate .ExpiresOn}}</time><p class="muted" data-token-expires-on="{{.ExpiresOn}}">{{expiryRemaining .ExpiresOn}}</p>{{else}}Never{{end}}{{end}}

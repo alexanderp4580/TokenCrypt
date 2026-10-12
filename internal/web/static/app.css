@@ -1,0 +1,43 @@
+header nav a {border-bottom:2px solid transparent;padding-bottom:2px}
+header nav a[aria-current="page"] {color:var(--ink-primary);border-bottom-color:var(--blue)}
+a[role="button"] {font-weight:400;text-decoration:none}
+a[role="button"]:hover {background:var(--surface);border-color:var(--blue);color:var(--ink-primary)}
+button.danger:not(:disabled):hover {border-color:var(--critical)}
+.form-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:20px;align-items:start}
+.form-panel {max-width:540px;margin:20px 0;padding:18px;border:1px solid var(--gridline);border-radius:4px;background:var(--surface)}
+.form-grid .form-panel {max-width:none;margin:0}
+.form-panel h2,.request-card h2 {margin-top:0}
+.form-panel small {display:block;margin-bottom:12px;color:var(--ink-muted)}
+.form-panel button {margin-top:8px}
+.request-card {padding:18px;margin:0;border:1px solid var(--gridline)}
+.request-card form {margin-bottom:12px}
+.reason {white-space:pre-wrap;overflow-wrap:anywhere}
+.muted {color:var(--ink-muted)} .flag {color:var(--critical)}
+.notice {padding:10px 14px;border:1px solid var(--baseline);border-radius:4px}
+.actions {min-width:190px;max-width:300px}
+.actions form {margin-top:8px;margin-bottom:8px}
+.actions details {margin-top:8px;margin-bottom:0}
+.actions input {max-width:100%}
+.delete-control {width:100%;max-width:320px}
+.delete-control summary {display:flex;align-items:center;justify-content:space-between;gap:12px;width:fit-content;max-width:100%;padding:6px 14px;border:1px solid var(--critical);border-radius:4px;color:var(--ink-primary);font-size:13px;line-height:1.5;cursor:pointer}
+.delete-control summary::after {float:none;margin:0}
+.delete-control summary:hover {background:var(--surface)}
+.delete-control summary:focus-visible {outline:2px solid var(--critical);outline-offset:3px}
+.actions .delete-confirmation {margin:12px 0 0;padding:14px;border:1px solid var(--critical);border-radius:4px;background:var(--surface)}
+.delete-confirmation p,.delete-panel p {margin:0 0 8px;overflow-wrap:anywhere}
+.delete-confirmation .delete-warning,.delete-panel .delete-warning {margin-bottom:16px;color:var(--ink-muted);font-size:13px}
+.delete-confirmation input {width:100%}
+.delete-confirmation button,.delete-panel button {margin:8px 0 0;border-color:var(--critical);color:var(--ink-primary)}
+.delete-confirmation button:not(:disabled):hover,.delete-panel button:not(:disabled):hover {background:var(--critical)}
+.delete-panel {border-color:var(--critical)}
+td p {margin:4px 0 0} td {overflow-wrap:anywhere}
+@media(max-width:760px) {
+  header nav {gap:12px} .form-grid {display:block} .form-grid>* {margin-bottom:16px}
+  .form-panel {max-width:100%;padding:14px} .request-card {padding:14px}
+  main table {display:block;white-space:normal;overflow-x:visible;width:100%}
+  main table thead {display:none} main table tbody {display:block}
+  main table tr {display:block;margin:0 0 16px;padding:10px;border:1px solid var(--gridline);border-radius:4px;background:var(--surface)}
+  main table td {display:block;padding:6px 0;border:none;width:100%;max-width:none}
+  main table td::before {content:attr(data-label);display:block;color:var(--ink-muted);font-size:12px;margin-bottom:3px}
+  .actions {min-width:0} .actions input {width:100%} textarea,input,select {max-width:100%}
+}

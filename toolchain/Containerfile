@@ -1,0 +1,11 @@
+ARG GO_BASE
+FROM ${GO_BASE}
+
+ARG GO_VERSION
+RUN go version | grep -F "go${GO_VERSION} "
+
+ENV GOCACHE=/workspace/.local/go-build \
+    GOMODCACHE=/workspace/.local/go-mod \
+    GOFLAGS=-buildvcs=false
+
+WORKDIR /workspace

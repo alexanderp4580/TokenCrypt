@@ -1,0 +1,8 @@
+{{define "content"}}<section class="auth"><h1>Unlock</h1><p>Unlock the notifier and check saved grants.</p>
+<form method="post" action="/unlock"><input type="hidden" name="csrf" value="{{.CSRF}}">
+<label for="passphrase">Vault passphrase</label><input id="passphrase" type="password" name="passphrase" autocomplete="current-password" maxlength="4096" required>
+<button type="submit">Unlock</button></form></section>
+{{if .Candidates}}<h2>Saved grants</h2><form method="post" action="/restore"><input type="hidden" name="csrf" value="{{.CSRF}}">
+{{range .Candidates}}<label><input type="checkbox" name="grant" value="{{.ID}}"> {{.Secret}} until {{.Expires.Format "2006-01-02 15:04 MST"}}</label>{{end}}
+<label for="restore-passphrase">Vault passphrase</label><input id="restore-passphrase" type="password" name="passphrase" autocomplete="current-password" maxlength="4096" required>
+<button type="submit">Restore selected grants</button></form>{{end}}{{end}}

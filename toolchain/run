@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -eq 0 ]; then
+  echo "usage: toolchain/run COMMAND [ARGS...]" >&2
+  exit 2
+fi
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$ROOT/toolchain/versions.env"
+IMAGE=${TOKENCRYPT_TOOLCHAIN_IMAGE:-$TOOLCHAIN_IMAGE}
+mkdir -p "$ROOT/.local/go-build" "$ROOT/.local/go-mod"
+
+exec podman run --rm -i \
+  --volume "$ROOT:/workspace:Z" \
+  --workdir /workspace \
+  "$IMAGE" "$@"

@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$ROOT/toolchain/versions.env"
+exec podman build \
+  --build-arg "GO_BASE=$GO_BASE" \
+  --build-arg "GO_VERSION=$GO_VERSION" \
+  --tag "$TOOLCHAIN_IMAGE" \
+  --file "$ROOT/toolchain/Containerfile" \
+  "$ROOT/toolchain"

@@ -1,0 +1,5 @@
+{{define "content"}}<section class="auth"><h1>Create your vault</h1><p>Choose a passphrase to protect your secrets.</p><form method="post" action="/setup">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<label for="passphrase">Vault passphrase</label><input id="passphrase" type="password" name="passphrase" autocomplete="new-password" maxlength="4096" required>
+<label for="confirmation">Confirm passphrase</label><input id="confirmation" type="password" name="confirmation" autocomplete="new-password" maxlength="4096" required>
+<button type="submit">Create vault</button></form></section>{{end}}

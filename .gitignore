@@ -1,0 +1,6 @@
+__pycache__/
+/.superpowers/
+/.claude/worktrees/
+/.local/
+/.env*
+/.worktrees/
