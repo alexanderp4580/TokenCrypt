@@ -270,29 +270,6 @@ func TestFirstRunSetup(t *testing.T) {
 	}
 }
 
-func TestUnlockCredentialsOnlyReachCallback(t *testing.T) {
-	svc, clk, _ := testService(t)
-	if err := svc.SetNotifier([]byte("fake-notifier-token"), "-1009000000007", []byte(fakePass)); err != nil {
-		t.Fatal(err)
-	}
-	var got core.UnlockResult
-	h := Handler(svc, Config{AllowedHosts: []string{"crypt.local"}, Clock: clk, OnUnlock: func(r core.UnlockResult) { got = r }})
-	a, csrf := login(t, h)
-	if !svc.Status().Locked {
-		t.Fatal("login unlocked service")
-	}
-	w := request(h, "POST", "/unlock", url.Values{"csrf": {csrf}, "passphrase": {fakePass}}, a)
-	if w.Code != 200 || svc.Status().Locked || string(got.NotifierToken) != "fake-notifier-token" || got.ChatID != "-1009000000007" {
-		t.Fatalf("unlock: %d callback=%+v", w.Code, got)
-	}
-	for _, secret := range []string{fakePass, "fake-notifier-token", "-1009000000007"} {
-		if strings.Contains(w.Body.String(), secret) {
-			t.Fatalf("unlock rendered credential")
-		}
-	}
-	crypto.Zero(got.NotifierToken)
-}
-
 func TestUnlockAndConfirmPersistedGrants(t *testing.T) {
 	svc, clk, dir := testService(t)
 	if err := svc.Create("fake_secret", "Fake description", []byte("fake saved value"), []byte(fakePass), "user"); err != nil {
@@ -345,16 +322,13 @@ func TestUnlockRedactsCorruptStorage(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "grants.json"), []byte(bad), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "notifier.json"), []byte("fake corrupt notifier content"), 0600); err != nil {
-		t.Fatal(err)
-	}
 	h := Handler(svc, Config{AllowedHosts: []string{"crypt.local"}, Clock: clk})
 	a, csrf := login(t, h)
 	w := request(h, "POST", "/unlock", url.Values{"csrf": {csrf}, "passphrase": {fakePass}}, a)
-	if w.Code != 200 || svc.Status().Locked || !strings.Contains(w.Body.String(), "Saved grants are unavailable") || !strings.Contains(w.Body.String(), "Notifier credentials are unavailable") {
+	if w.Code != 200 || svc.Status().Locked || !strings.Contains(w.Body.String(), "Saved grants are unavailable") {
 		t.Fatalf("unlock corrupt storage: %d %s", w.Code, w.Body.String())
 	}
-	for _, secret := range []string{bad, dir, "fake corrupt notifier content", fakePass} {
+	for _, secret := range []string{bad, dir, fakePass} {
 		if strings.Contains(w.Body.String(), secret) {
 			t.Fatal("response leaked storage or passphrase")
 		}

@@ -14,18 +14,18 @@
 
 - Argon2id KDF, 256 MiB, 14 passes, 4 lanes (minimum 3 passes), about one second on this device; salt 16 random bytes
 - XChaCha20-Poly1305, fresh random 24-byte nonce per encryption; key ID is 16 random bytes generated with each DK
-- Associated data: format version, kind (`mk`, `dk`, `secret`, `notifier`), secret name and key ID
+- Associated data: format version, kind (`mk`, `dk`, `secret`), secret name and key ID
 - Secret names match `[a-z][a-z0-9_]{0,63}`; `run` uses the upper-case name as the environment variable
 - Secret values are at most 1 MiB (proposal value)
 - Grants default to 10 minutes and last at most 90 days; the form offers 10 minutes, 1 hour, 24 hours, 7 days, 30 days, 90 days
 - Grants of 1 hour or less live in memory only; longer grants are recorded in `grants.json` with a MAC under `HKDF(MK, "tokencrypt grants v1")`
-- Notifier service credentials: private `service/notifier.json` outside vault encryption; token cap 4096 bytes, numeric chat ID cap 64 bytes, JSON cap 64 KiB. Encrypted `notifier.json` authenticates under `HKDF(MK, "tokencrypt notifier v1")` for migration after successful unlock when the service file is absent
+- Notifier credentials: one env file (`serve --env-file`, default `$XDG_CONFIG_HOME/tokencrypt/telegram.env`) read once at startup; regular file owned by the daemon user, mode `0600` or stricter; token cap 4096 bytes, numeric chat ID cap 64 bytes, file cap 64 KiB
 - Files are mode `0600`, directories `0700`; every write is temp file, flush, rename
 - Socket: `$XDG_RUNTIME_DIR/tokencrypt/sock`, directory `0700`, socket `0600`, peer uid checked with `SO_PEERCRED`
 - Login and passphrase throttle: 5 consecutive failures lock all passphrase attempts for 5 minutes (proposal values)
 - Requests: at most 10 pending, expire after 10 minutes, at most one Telegram message per request and 30 per hour (proposal values); reason capped at 200 characters
 - Web UI binds `127.0.0.1`; session cookie `HttpOnly`, `SameSite=Strict`, `Secure` over HTTPS; CSRF token on every state-changing form; `Host` header allow-list; login throttle counted per daemon
-- Passphrase required for: create, update value, rename, delete, grant, approve request, set notifier, clear flag, unlock
+- Passphrase required for: create, update value, rename, delete, grant, approve request, clear flag, unlock
 - Agent CLI commands: `get`, `run`, `request`, `status`, `flag`; the CLI cannot create, update, rename, delete, unlock, grant, revoke or clear flags
 - Audit log: JSON lines at `~/.local/state/tokencrypt/audit.log`; no values, no passphrases
 - Vault directory `~/.local/share/tokencrypt/`; tests use temporary directories and fake secrets only
@@ -41,7 +41,7 @@
 
 ## Progress
 
-Slices A–D are merged to `main`. See [progress.md](progress.md) for deployment and review state and [evidence.md](evidence.md) for observed checks. The notifier reads credentials from the daemon environment at startup. 
+Slices A–D are merged to `main`. See [progress.md](progress.md) for deployment and review state and [evidence.md](evidence.md) for observed checks. The notifier reads credentials from the env file at startup.
 
 ## Workspace and slices
 
@@ -58,7 +58,7 @@ Slices A–D are merged to `main`. See [progress.md](progress.md) for deployment
 - `go.mod`, `go.sum`: module `tokencrypt`
 - `cmd/tokencrypt/main.go`: subcommand dispatch only; `cmd/AGENTS.md`
 - `internal/crypto/`: KDF, AEAD, HKDF, MAC, zeroing
-- `internal/vault/`: files, secrets CRUD, metadata, flags, independent notifier credentials and authenticated encrypted migration, sessions holding MK
+- `internal/vault/`: files, secrets CRUD, metadata, flags, sessions holding MK
 - `internal/audit/`: append-only JSON-lines log
 - `internal/clock/`: `Clock` interface, real and fake clocks
 - `internal/grants/`: grant table, expiry, `grants.json` persistence and restore
@@ -67,7 +67,7 @@ Slices A–D are merged to `main`. See [progress.md](progress.md) for deployment
 - `internal/cli/`: agent commands
 - `internal/daemon/`: wiring, hardening, file lock, unlock flow
 - `internal/web/`: handlers, templates, static assets, sessions, CSRF
-- `internal/notify/`: Telegram transport and notifier
+- `internal/notify/`: env-file credentials, Telegram transport and notifier
 - `internal/AGENTS.md`: ownership of the packages above
 - `toolchain/`: `Containerfile`, `versions.env`, `run`, `check`; `toolchain/AGENTS.md`
 - `scripts/e2e.sh`: end-to-end check from Task 14
@@ -138,10 +138,10 @@ Slices A–D are merged to `main`. See [progress.md](progress.md) for deployment
 - [x] **Step 4:** Run the same command with `-race`. Expected: PASS
 - [x] **Step 5:** Commit: `Add vault storage and secret CRUD`
 
-## Task 4: Vault metadata, flags and notifier blob
+## Task 4: Vault metadata and flags
 
 **Files:**
-- Create: `internal/vault/meta.go`, `internal/vault/notifier.go`, `internal/vault/meta_test.go`
+- Create: `internal/vault/meta.go`, `internal/vault/meta_test.go`
 - Modify: `internal/vault/vault.go` (delete and rename update metadata)
 
 **Interfaces:**
@@ -149,11 +149,9 @@ Slices A–D are merged to `main`. See [progress.md](progress.md) for deployment
 - Produces: `type Flag struct{ Kind string; Actor string; Reason string; At time.Time }` with kinds `leaked` and `invalid`
 - Produces: `type Meta struct{ Name, Description string; Created, Updated, LastGranted time.Time; Flag *Flag; KeyID []byte; Corrupt bool }`
 - Produces on `*Vault` (no passphrase): `List() ([]Meta, error)`; `Get(name string) (Meta, error)`; `SetDescription(name, description string) error`; `SetFlag(name string, f Flag) error`; `ClearFlag(name string) error`; `TouchGranted(name string, at time.Time) error`
-- Produces on `*Session`: `SetNotifier(token []byte, chatID string) error`; `LoadNotifier() (token []byte, chatID string, err error)`
-- Produces on `*Vault`: `SetServiceNotifier`, `LoadServiceNotifier`, `MigrateServiceNotifier`; private independent credentials with bounded reads, atomic durable writes, missing/unavailable diagnostics and configured-file precedence
-- Behavior: UpdateValue clears the flag; Rename moves metadata; Delete removes it. `List` marks unreadable secret files with `Meta{Name, Corrupt: true}` alongside healthy entries; `Get` fails for those files. Whole-file metadata corruption fails the list. Header/secret JSON have 2 MiB read/write caps; metadata 8 MiB; notifier 64 KiB. Writes reject oversized output before changing the target; reads return `ErrCorrupt`
+- Behavior: UpdateValue clears the flag; Rename moves metadata; Delete removes it. `List` marks unreadable secret files with `Meta{Name, Corrupt: true}` alongside healthy entries; `Get` fails for those files. Whole-file metadata corruption fails the list. Header/secret JSON have 2 MiB read/write caps; metadata 8 MiB. Writes reject oversized output before changing the target; reads return `ErrCorrupt`
 
-- [x] **Step 1:** Write tests: Create fills Created and Updated; `List` returns metadata sorted by name and never contains a value; SetFlag with kind `leaked` or `invalid` shows in `Get`; an unknown kind returns an error; UpdateValue clears the flag; ClearFlag removes it; Rename and Delete carry metadata with them; SetDescription changes only the description; notifier round-trip returns the same token and chat ID; the notifier file contains no plaintext token; `meta.json` is written atomically
+- [x] **Step 1:** Write tests: Create fills Created and Updated; `List` returns metadata sorted by name and never contains a value; SetFlag with kind `leaked` or `invalid` shows in `Get`; an unknown kind returns an error; UpdateValue clears the flag; ClearFlag removes it; Rename and Delete carry metadata with them; SetDescription changes only the description; `meta.json` is written atomically
 - [x] **Step 2:** Run `toolchain/run go test ./internal/vault/...`. Expected: FAIL on the new tests
 - [x] **Step 3:** Implement
 - [x] **Step 4:** Run with `-race`. Expected: PASS
@@ -168,7 +166,7 @@ Slices A–D are merged to `main`. See [progress.md](progress.md) for deployment
 - Consumes: `clock.Clock`
 - Produces: `type Event struct{ Time time.Time; Type string; Actor string; Secret string; Detail string }`
 - Produces: `Open(path string, clk clock.Clock) (*Log, error)`; `(*Log).Write(e Event) error` (sets `Time` from the clock when zero); `(*Log).Tail(n int) ([]Event, error)`
-- Event types: `secret.created`, `secret.updated`, `secret.renamed`, `secret.deleted`, `flag.set`, `flag.cleared`, `request.created`, `request.approved`, `request.denied`, `request.expired`, `grant.started`, `grant.ended`, `grant.revoked`, `grant.restored`, `login.failed`, `notifier.set`, `daemon.unlocked`
+- Event types: `secret.created`, `secret.updated`, `secret.renamed`, `secret.deleted`, `flag.set`, `flag.cleared`, `request.created`, `request.approved`, `request.denied`, `request.expired`, `grant.started`, `grant.ended`, `grant.revoked`, `grant.restored`, `login.failed`, `notifier.failed`, `notifier.dropped`, `daemon.unlocked`
 
 - [x] **Step 1:** Write tests: Write then Tail returns events in order; each line is valid JSON; Tail(n) returns the last n; the file is `0600` and its directory `0700`; concurrent Writes from 20 goroutines produce 20 intact lines under `-race`; reopening appends instead of truncating; `Detail` containing newlines stays on one line (JSON-escaped)
 - [x] **Step 2:** Run `toolchain/run go test ./internal/audit/...`. Expected: FAIL
@@ -215,14 +213,13 @@ Slices A–D are merged to `main`. See [progress.md](progress.md) for deployment
 **Interfaces:**
 - Consumes: Tasks 3–6
 - Produces: `New(v *vault.Vault, g *grants.Manager, a *audit.Log, clk clock.Clock, cfg Config) *Service` with `Config{MaxPending int; RequestTTL time.Duration; MaxGrant time.Duration; DefaultGrant time.Duration; MaxFailures int; Lockout time.Duration}` and `DefaultConfig()` holding the Global Constraints values
-- Produces passphrase operations: `Create(name, desc string, value, pass []byte, actor string) error`; `UpdateValue(name string, value, pass []byte, actor string) error`; `Rename(old, new string, pass []byte, actor string) error`; `Delete(name string, pass []byte, actor string) error`; `Grant(name string, d time.Duration, pass []byte, actor, requestID string) (grants.Grant, error)`; `ClearFlag(name string, pass []byte, actor string) error`; `SetNotifier(token []byte, chatID string, pass []byte) error`; `Unlock(pass []byte) (UnlockResult, error)` where `UnlockResult{NotifierToken []byte; ChatID string; NotifierErr, GrantsErr error; Candidates []grants.Grant}`; `RestoreGrants(pass []byte, ids []string) (int, error)` restores only confirmed candidates after a fresh passphrase check
+- Produces passphrase operations: `Create(name, desc string, value, pass []byte, actor string) error`; `UpdateValue(name string, value, pass []byte, actor string) error`; `Rename(old, new string, pass []byte, actor string) error`; `Delete(name string, pass []byte, actor string) error`; `Grant(name string, d time.Duration, pass []byte, actor, requestID string) (grants.Grant, error)`; `ClearFlag(name string, pass []byte, actor string) error`; `Unlock(pass []byte) (UnlockResult, error)` where `UnlockResult{GrantsErr error; Candidates []grants.Grant}`; `RestoreGrants(pass []byte, ids []string) (int, error)` restores only confirmed candidates after a fresh passphrase check
 - Produces agent operations: `Read(name string) ([]byte, error)` (touches last granted); `Request(name, reason string, d time.Duration) (Request, error)`; `Wait(ctx context.Context, id string) (Request, error)`; `Flag(name, kind, reason, actor string) error`; `Status() Status`
 - Produces user operations: `Verify(pass []byte) error` (login check; counts toward the throttle); `Deny(id, actor string) error`; `SetDescription(name, description string) error` (no passphrase); `Revoke(id, actor string) error`; `AuditTail(n int) ([]audit.Event, error)`; `LogNotifierEvent(typ, detail string) error` (only `notifier.` types); approving a request is `Grant` with its request ID
-- Notifier policy: `SetNotifier` writes independent service settings after authentication; `Notifier() UnlockResult` supplies daemon credentials without unlocking and has no agent API route. `Unlock` migrates encrypted settings only when independent settings are absent. Audit contains no notifier token or chat ID
 - Produces: `type Status struct{ Secrets []vault.Meta; Grants []grants.Grant; Pending []Request; Locked bool; Error string }`
 - Produces: `type Request struct{ ID, Secret, Reason string; Duration time.Duration; Created time.Time; State string }` with states `pending`, `approved`, `denied`, `expired`
 - Produces: `Events() <-chan Event` with `Event{Kind, Secret, RequestID, Actor, FlagKind, Reason string; Duration time.Duration}` for kinds `request.created` and `flag.set`
-- Recovery: corrupt grants storage yields a generic `UnlockResult.GrantsErr`, returns notifier credentials, ends both locked states and restores no values. `RestoreGrants` clears stale candidates and returns a generic `grants.ErrCorrupt` warning while ending both locked states. The file stays intact and long grants fail closed; grant JSON reads and writes have an 8 MiB cap.
+- Recovery: corrupt grants storage yields a generic `UnlockResult.GrantsErr`, ends both locked states and restores no values. `RestoreGrants` clears stale candidates and returns a generic `grants.ErrCorrupt` warning while ending both locked states. The file stays intact and long grants fail closed; grant JSON reads and writes have an 8 MiB cap.
 - Text and audit limits: Create and SetDescription clean control, format and line-separator characters and truncate at 1 KiB of valid UTF-8 bytes. AuditTail reads the newest 2 MiB, discarding a partial starting line; audit writes reject encoded lines over 2 MiB.
 - Errors: `ErrThrottled`, `ErrFlagged` (carries kind and reason), `ErrTooManyPending`, `ErrDurationTooLong`, `ErrNotFound`
 
@@ -236,7 +233,7 @@ Slices A–D are merged to `main`. See [progress.md](progress.md) for deployment
   - `Grant` with a request ID marks it `approved`; `Deny` marks it `denied`; the agent's requested duration is only a default for the form
   - A reason over 200 characters is truncated; control characters in a reason are replaced with spaces
   - Granting one secret leaves another unreadable
-  - `Unlock` after constructing a new `Service` on a vault with a long grant returns the notifier token and restores confirmed grants only; before `Unlock`, `Read` returns a locked error
+  - `Unlock` after constructing a new `Service` on a vault with a long grant returns saved-grant candidates and restores confirmed grants only; before `Unlock`, `Read` returns a locked error
   - Audit entries for all operations contain no canary value and no passphrase
   - Under `-race`: concurrent `Grant`, `Read`, `Flag` and `Revoke` calls leave no readable value after `Flag` returns
 - [x] **Step 2:** Run `toolchain/run go test -race ./internal/core/...`. Expected: FAIL
@@ -310,7 +307,7 @@ Slices A–D are merged to `main`. See [progress.md](progress.md) for deployment
 
 **Interfaces:**
 - Consumes: `core.Service`
-- Produces: `Handler(svc *core.Service, cfg Config) http.Handler` with `Config{AllowedHosts []string; SecureCookies bool; IdleTimeout time.Duration; Clock clock.Clock; OnUnlock func(core.UnlockResult); OnNotifier func()}`; the unlock page calls `OnUnlock` for authenticated migration, and a successful settings save calls `OnNotifier` to activate current credentials
+- Produces: `Handler(svc *core.Service, cfg Config) http.Handler` with `Config{AllowedHosts []string; SecureCookies bool; IdleTimeout time.Duration; Clock clock.Clock; InitParams *crypto.Params}`
 - Behavior: every route except `/login` and static assets needs a session; state-changing methods need a valid CSRF token
 
 - [x] **Step 1:** Write tests with `httptest`: unauthenticated GET of `/` redirects to `/login`; a wrong passphrase returns the login page, sets no cookie and counts toward the throttle; the right passphrase sets a cookie with `HttpOnly`, `SameSite=Strict`, and `Secure` when configured; the session expires after the idle timeout of fake time; a POST without a CSRF token or with another session's token returns 403; a request with a `Host` header outside the allow-list returns 403; after 5 failures the login returns 429 even for the right passphrase; logout invalidates the session; responses carry `Cache-Control: no-store`
@@ -322,12 +319,12 @@ Slices A–D are merged to `main`. See [progress.md](progress.md) for deployment
 ## Task 12: Web pages
 
 **Files:**
-- Create: `internal/web/secrets.go`, `internal/web/grants.go`, `internal/web/requests.go`, `internal/web/notifier.go`, `internal/web/audit.go`, `internal/web/pages_test.go`, one template per page under `internal/web/templates/`, `internal/web/static/app.css`
+- Create: `internal/web/secrets.go`, `internal/web/grants.go`, `internal/web/requests.go`, `internal/web/audit.go`, `internal/web/pages_test.go`, one template per page under `internal/web/templates/`, `internal/web/static/app.css`
 - Modify: `internal/web/web.go` (routes)
 
 **Interfaces:**
 - Consumes: Task 11 handler and session; `core.Service`
-- Pages: secrets list with create, update value, rename, delete, set flag and clear flag forms; grant form with the six duration choices; pending requests with approve (passphrase and duration) and deny; live grants with countdown and revoke; unlock page after a restart showing restorable grants for confirmation; notifier settings; audit log
+- Pages: secrets list with create, update value, rename, delete, set flag and clear flag forms; grant form with the six duration choices; pending requests with approve (passphrase and duration) and deny; live grants with countdown and revoke; unlock page after a restart showing restorable grants for confirmation; audit log
 - Every action has a visible button; the layout works on a phone screen (single column)
 - Follow the styling in [design.md#web-ui](design.md#web-ui). Check the rendered desktop and phone pages during the Slice C manual review.
 
@@ -342,14 +339,14 @@ Slices A–D are merged to `main`. See [progress.md](progress.md) for deployment
 ## Task 13: Telegram notifier
 
 **Files:**
-- Create: `internal/notify/notify.go`, `internal/notify/telegram.go`, `internal/notify/notify_test.go`
-- Modify: `cmd/tokencrypt/runtime.go` (load independent credentials on startup, refresh after settings saves and authenticated migration)
+- Create: `internal/notify/notify.go`, `internal/notify/telegram.go`, `internal/notify/credentials.go`, `internal/notify/notify_test.go`, `internal/notify/credentials_test.go`
+- Modify: `cmd/tokencrypt/runtime.go` (read the env file once at startup and start the notifier)
 
 **Interfaces:**
 - Consumes: `core.Service.Events()`
 - Produces: `type Transport interface{ Send(chatID, text string) error }`; `NewTelegram(token string, client *http.Client, baseURL string) Transport`; `Start(ctx context.Context, svc *core.Service, t Transport, chatID, approvalBaseURL string, clk clock.Clock)`
 
-- [ ] **Step 1:** Write tests with a fake transport and a fake HTTP server: a new request sends one plain-text message with secret name, duration, reason and an approval link, and no value; a flag event sends a notice naming kind and actor; the 31st message within one hour is dropped and audited; the transport call uses no markup parse mode; reasons with newlines and markup characters appear unparsed; a transport error is logged without the token or chat ID in the message; configured cold startup delivers notices while protected reads fail; settings activate and rotate without unlock; replacement keeps the hourly budget and request deduplication
+- [ ] **Step 1:** Write tests with a fake transport and a fake HTTP server: a new request sends one plain-text message with secret name, duration, reason and an approval link, and no value; a flag event sends a notice naming kind and actor; the 31st message within one hour is dropped and audited; the transport call uses no markup parse mode; reasons with newlines and markup characters appear unparsed; a transport error is logged without the token or chat ID in the message; an env file with valid credentials delivers notices from a locked startup while protected reads fail; unsafe, partial or invalid files leave the notifier off with one generic audit event; the Runner keeps the hourly budget and request deduplication
 - [ ] **Step 2:** Run `toolchain/run go test -race ./internal/notify/...`. Expected: FAIL
 - [ ] **Step 3:** Implement; verify the Telegram `sendMessage` request shape against the Bot API documentation before coding (to check)
 - [ ] **Step 4:** Run the same command. Expected: PASS
@@ -366,7 +363,7 @@ Slices A–D are merged to `main`. See [progress.md](progress.md) for deployment
   - the agent's `flag --kind invalid` blocks `get` and the next grant; a new value clears the flag
   - a request from the CLI appears in the web UI and the fake Telegram; approval grants it
   - a long grant survives killing and restarting the daemon only after the unlock page confirms it
-  - configured notifier delivery on locked restart needs no login, unlock or grant restoration; its file is `0600` inside a `0700` directory
+  - notifier delivery from a `0600` env file on locked restart needs no login, unlock or grant restoration
   - vault files contain no canary value
 - [ ] **Step 2:** Run `scripts/e2e.sh`. Expected: every line PASS, exit 0
 - [ ] **Step 3:** Run `toolchain/check`. Expected: exit 0

@@ -28,11 +28,11 @@ const updated = "FAKE_TOKENCRYPT_REPLACEMENT_87342"
 const botToken = "fake-e2e-bot-token"
 
 type harness struct {
-	binary, dir, base, host, telegram string
-	client                            *http.Client
-	process                           *exec.Cmd
-	done                              chan error
-	log                               bytes.Buffer
+	binary, dir, base, host, telegram, envFile string
+	client                                     *http.Client
+	process                                    *exec.Cmd
+	done                                       chan error
+	log                                        bytes.Buffer
 }
 
 func fail(label string) { panic(label) }
@@ -100,7 +100,7 @@ func values(fields ...string) url.Values {
 }
 func (h *harness) start() {
 	h.log.Reset()
-	h.process = exec.Command(h.binary, "serve", "--vault-dir", filepath.Join(h.dir, "vault"), "--state-dir", filepath.Join(h.dir, "state"), "--socket", filepath.Join(h.dir, "sock"), "--listen", h.host, "--allowed-hosts", h.host, "--approval-url", h.base, "--telegram-api-base", h.telegram)
+	h.process = exec.Command(h.binary, "serve", "--vault-dir", filepath.Join(h.dir, "vault"), "--state-dir", filepath.Join(h.dir, "state"), "--socket", filepath.Join(h.dir, "sock"), "--listen", h.host, "--allowed-hosts", h.host, "--approval-url", h.base, "--telegram-api-base", h.telegram, "--env-file", h.envFile)
 	h.process.Stdout = &h.log
 	h.process.Stderr = &h.log
 	if err := h.process.Start(); err != nil {
@@ -191,11 +191,15 @@ func run(binary string) {
 		io.WriteString(w, `{"ok":true}`)
 	}))
 	defer telegram.Close()
-	h := &harness{binary: binary, dir: dir, base: "http://" + host, host: host, telegram: telegram.URL, client: client}
+	h := &harness{binary: binary, dir: dir, base: "http://" + host, host: host, telegram: telegram.URL, envFile: filepath.Join(dir, "telegram.env"), client: client}
+	credentials := "TELEGRAM_BOT_TOKEN=" + botToken + "\nTELEGRAM_CHAT_ID=12345\n"
+	if os.WriteFile(h.envFile, []byte(credentials), 0600) != nil {
+		fail("write notifier env file")
+	}
 	defer h.stop(false)
 	h.start()
 	secondCtx, cancelSecond := context.WithTimeout(context.Background(), 5*time.Second)
-	second := exec.CommandContext(secondCtx, binary, "serve", "--vault-dir", filepath.Join(dir, "vault"), "--state-dir", filepath.Join(dir, "state"), "--socket", filepath.Join(dir, "second-sock"), "--listen", host)
+	second := exec.CommandContext(secondCtx, binary, "serve", "--vault-dir", filepath.Join(dir, "vault"), "--state-dir", filepath.Join(dir, "state"), "--socket", filepath.Join(dir, "second-sock"), "--listen", host, "--env-file", filepath.Join(dir, "absent.env"))
 	second.Stdout, second.Stderr = io.Discard, io.Discard
 	err = second.Run()
 	check(err != nil && secondCtx.Err() == nil, "setup holds exclusive daemon lock")
@@ -257,7 +261,6 @@ func run(binary string) {
 	out, ok = h.cli("get", "alpha")
 	check(ok && out == updated, "new value clears flag and is granted")
 	h.revoke(token)
-	h.post("/notifier", token, values("token", botToken, "chat_id", "12345", "passphrase", fakePass), 303)
 	_, ok = h.cli("request", "alpha", "--for", "10m", "--reason", "fake <approval> reason")
 	check(ok, "CLI requests access")
 	body = h.page("/requests")
@@ -321,7 +324,6 @@ func run(binary string) {
 	check(ok && out == updated, "confirmed long grant survives daemon restart")
 	h.page("/secrets")
 	h.page("/grants")
-	h.page("/notifier")
 	h.page("/audit")
 	check(true, "web pages omit stored values and notifier token")
 	_, ok = h.cli("status")
@@ -340,22 +342,14 @@ func run(binary string) {
 		if bytes.Contains(b, []byte(canary)) || bytes.Contains(b, []byte(updated)) {
 			fail("plaintext secret in vault")
 		}
-		if path == filepath.Join(dir, "vault", "service", "notifier.json") {
-			var config struct {
-				Token []byte `json:"token"`
-				Chat  string `json:"chat_id"`
-			}
-			check(json.Unmarshal(b, &config) == nil && string(config.Token) == botToken && config.Chat == "12345", "service notifier has independent recoverable credentials")
-			info, e := os.Stat(path)
-			check(e == nil && info.Mode().Perm() == 0600, "service notifier file permissions are 0600")
-			info, e = os.Stat(filepath.Dir(path))
-			check(e == nil && info.Mode().Perm() == 0700, "service notifier directory permissions are 0700")
-		} else if bytes.Contains(b, []byte(botToken)) {
-			fail("notifier credential outside service storage")
+		if bytes.Contains(b, []byte(botToken)) {
+			fail("notifier credential in vault")
 		}
 		return nil
 	})
 	check(true, "vault files contain no plaintext protected values")
+	auditLog, err := os.ReadFile(filepath.Join(dir, "state", "audit.log"))
+	check(err == nil && !bytes.Contains(auditLog, []byte(botToken)), "audit log omits notifier token")
 	info, err := os.Stat(filepath.Join(dir, "sock"))
 	check(err == nil && info.Mode().Perm() == 0600, "socket permissions are 0600")
 	h.stop(false)

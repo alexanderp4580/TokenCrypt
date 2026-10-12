@@ -31,8 +31,8 @@ func (s *server) auditPage(w http.ResponseWriter, r *http.Request, x session) {
 				row.Kind, row.FlagActor, row.Reason = detail.Kind, detail.Actor, detail.Reason
 			}
 		}
-		// Render structured flag detail only. Other details can contain notifier
-		// chat IDs or storage diagnostics and do not belong in the page.
+		// Render structured flag detail only. Other details can contain storage
+		// diagnostics and do not belong in the page.
 		row.Event.Detail = ""
 		d.Audit = append(d.Audit, row)
 	}

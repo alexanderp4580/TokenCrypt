@@ -79,3 +79,23 @@ func TestInitReadsPipedPassphraseTwice(t *testing.T) {
 		}
 	}
 }
+
+func TestServeEnvFileDefaultsAndOverride(t *testing.T) {
+	config := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", config)
+	opts, err := parseServe(nil)
+	if err != nil || opts.EnvFile != filepath.Join(config, "tokencrypt", "telegram.env") {
+		t.Fatalf("XDG default: %q, %v", opts.EnvFile, err)
+	}
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", home)
+	opts, err = parseServe(nil)
+	if err != nil || opts.EnvFile != filepath.Join(home, ".config", "tokencrypt", "telegram.env") {
+		t.Fatalf("HOME fallback: %q, %v", opts.EnvFile, err)
+	}
+	opts, err = parseServe([]string{"--env-file", "/fake/path.env"})
+	if err != nil || opts.EnvFile != "/fake/path.env" {
+		t.Fatalf("override: %q, %v", opts.EnvFile, err)
+	}
+}

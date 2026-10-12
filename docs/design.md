@@ -18,7 +18,7 @@ Status: approved for autonomous implementation of Slices A–D; execution active
 - Grants default to 10 minutes and last at most 90 days. The grant form offers 10 minutes, 1 hour, 24 hours, 7 days, 30 days and 90 days. The user picks the duration; the agent's requested duration is a suggestion. Grants longer than 1 hour survive a daemon restart (see Grants)
 - Each grant requires the passphrase
 - The daemon runs continuously and serves the website; it has no idle exit
-- Website writes (create, update, rename, set notifier) need the passphrase; protected values authenticate under vault keys
+- Website writes (create, update, rename) need the passphrase; protected values authenticate under vault keys
 - Secret values are at most 1 MiB (proposal value). The value can be a token, a note or a message
 - Secret names match `[a-z][a-z0-9_]{0,63}`. The environment variable for `run` is the name in upper case
 
@@ -26,7 +26,7 @@ Status: approved for autonomous implementation of Slices A–D; execution active
 
 - `tokencrypt serve`: daemon with vault, grant table, audit log, web UI, unix-socket API, Telegram notifier. One daemon per vault, enforced with a file lock
 - `tokencrypt get|run|request|status|flag`: the agent CLI, talking to the unix socket
-- Web UI: the place to create, update and delete secrets, set the notifier, grant, deny, revoke and clear flags
+- Web UI: the place to create, update and delete secrets, grant, deny, revoke and clear flags
 
 ## Cryptography
 
@@ -40,11 +40,10 @@ DK_i --AEAD--> encrypts secret_i
 - KDF: Argon2id, 256 MiB, 14 passes, 4 lanes, about one second on this device (benchmark in the toolchain container: 0.85 to 1.16 s per derivation; other devices differ). Salt: 16 random bytes
 - AEAD: XChaCha20-Poly1305 with a fresh random 24-byte nonce per encryption with `golang.org/x/crypto` v0.58.0
 - Key ID: 16 random bytes generated with each DK
-- Associated data: format version, kind (`mk`, `dk`, `secret`, `notifier`), secret name and key ID, so ciphertexts cannot be swapped between names or roles. For `notifier` the name slot holds the chat ID and the key ID is the master key's, so an edited chat ID or a notifier file from another vault fails to open
-- Encrypted notifier settings use `HKDF(MK, "tokencrypt notifier v1")` for authenticated migration. Independent service credentials use local file permissions outside vault encryption
+- Associated data: format version, kind (`mk`, `dk`, `secret`), secret name and key ID, so ciphertexts cannot be swapped between names or roles
 - A wrong passphrase fails the AEAD tag when unwrapping MK
 - Changing the passphrase re-wraps MK; no secret is re-encrypted. Files copied before the change still open with the old passphrase, so a leaked passphrase needs new secret values, not only a new passphrase
-- KEK and MK exist for the length of one operation (grant, create, update, rename, set notifier, unlock, change passphrase), then the daemon zeroes them. Go's GC can copy buffers, so zeroing is best effort
+- KEK and MK exist for the length of one operation (grant, create, update, rename, unlock, change passphrase), then the daemon zeroes them. Go's GC can copy buffers, so zeroing is best effort
 - The daemon calls `prctl(PR_SET_DUMPABLE, 0)` so same-uid processes cannot attach with ptrace or read `/proc/<pid>/mem` (verified on this device); it tries `mlock` on page-isolated key and live-grant buffers, with lock/release outcomes checked in tests
 
 ## Vault layout
@@ -55,12 +54,10 @@ Under `~/.local/share/tokencrypt/`:
 - `secrets/<name>.json`: version, name, key ID, wrapped DK, nonce, ciphertext. Immutable per value; an update writes a new file
 - `meta.json`: plaintext state per secret: description, optional `expires_on` civil date, created, updated, last granted, flag. Names are not secret
 - `grants.json`: records of grants longer than 1 hour (see Grants)
-- `notifier.json`: encrypted notifier migration source; plaintext chat ID and bot token sealed under the notifier key
-- `service/notifier.json`: independent Telegram bot token and chat ID, outside vault encryption; the daemon reads this service credential without keys or grants
 
-Header and secret JSON files have a 2 MiB read/write limit, including the base64 encoding of a 1 MiB value. Metadata and grant records each have an 8 MiB limit; notifier JSON has a 64 KiB limit. Service credentials permit tokens up to 4096 bytes and chat IDs of up to 64 bytes that are an optional `-` followed by digits. Oversized reads fail with a generic diagnostic, and writes reject oversized output before changing the target.
+Header and secret JSON files have a 2 MiB read/write limit, including the base64 encoding of a 1 MiB value. Metadata and grant records each have an 8 MiB limit. Oversized reads fail with a generic diagnostic, and writes reject oversized output before changing the target.
 
-Files are mode `0600`, directories `0700`. Service credential reads reject symlinks, nonregular files and wider permissions. Writes use a temporary file, file fsync, rename and directory fsync; a failure before rename leaves the prior file intact.
+Files are mode `0600`, directories `0700`. Writes use a temporary file, file fsync, rename and directory fsync; a failure before rename leaves the prior file intact.
 
 ## Secret management (web UI)
 
@@ -89,7 +86,7 @@ Files are mode `0600`, directories `0700`. Service credential reads reject symli
 - Short grants (1 hour or less) exist in memory only; a daemon restart drops them
 - Long grants (over 1 hour, up to 90 days) are also recorded in `grants.json`: ID, name, key ID, expiry, granted-by and optional request ID, plus a MAC under `HKDF(MK, "tokencrypt grants v1")`. The file holds no values
 - After a restart, long grants stay unusable until the user unlocks in the web UI with the passphrase. The daemon verifies each MAC, drops records that are expired, flagged, tampered, or whose key ID no longer matches the current value, lists the rest for the user to confirm, decrypts the confirmed ones into memory and zeroes MK. `get` before the unlock fails with a message that the daemon is locked
-- Corrupt `grants.json` produces a warning after an authenticated unlock: the notifier loads, the daemon ends its locked state and restores no grants. The file stays intact; granting a long grant fails while it is corrupt. A fresh restore verification failure clears previous candidates.
+- Corrupt `grants.json` produces a warning after an authenticated unlock: the daemon ends its locked state and restores no grants. The file stays intact; granting a long grant fails while it is corrupt. A fresh restore verification failure clears previous candidates.
 - A long grant means the agent can read the value for that whole period; the UI shows the end date and warns for durations over 24 hours
 - Expiry is checked against the wall clock at each use and by a timer. For grants of one day or less the daemon also tracks monotonic time and takes the earlier deadline, because monotonic time can stop while the device is suspended (to check on this device)
 - Expiry and revoke zero the plaintext and remove the record from `grants.json`
@@ -111,25 +108,25 @@ Files are mode `0600`, directories `0700`. Service credential reads reject symli
 - First visit to an uninitialized vault: choose and confirm a vault passphrase through a setup form with CSRF and Host checks; an existing vault cannot be initialized again. A plain-HTTP deployment starts with no stored secrets and uses approval links and cookies without the Secure flag.
 - Login: passphrase check, then a random session cookie (`HttpOnly`, `SameSite=Strict`, `Secure` over HTTPS) with an idle timeout
 - CSRF token on every state-changing form; `Host` header allow-list against DNS rebinding
-- Pages: secrets (create, update, rename, delete, set flag, clear flag; no value display), grant form (duration, passphrase), pending requests (approve with passphrase, deny), live grants with countdown and revoke, write-only notifier settings (bot token, chat ID, passphrase), audit log
+- Pages: secrets (create, update, rename, delete, set flag, clear flag; no value display), grant form (duration, passphrase), pending requests (approve with passphrase, deny), live grants with countdown and revoke, audit log
 - Agent-supplied text (reason, flag reason) is HTML-escaped
 - Login throttling after repeated failures, counted per daemon rather than per address, because a reverse proxy presents every client as localhost
 
 ## Telegram
 
-- `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in the `serve` environment configure the notifier at startup, need no unlock or website action and take precedence over service and vault settings. Values are trimmed, validated with the service credential limits, unset from the process environment after reading and never logged, audited or displayed. Only one set, or invalid values, writes a generic `notifier.failed` audit event and falls back to the settings below
-- Without them, the user saves the bot token and chat ID on the authenticated notifier page with CSRF and a fresh passphrase check. The daemon stores both as private local service credentials and activates them on save
+- One credential source: an env file read once at daemon startup, set with `serve --env-file PATH` (default `$XDG_CONFIG_HOME/tokencrypt/telegram.env`, else `~/.config/tokencrypt/telegram.env`). Lines are `KEY=VALUE` with keys `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`; blank lines and `#` comments are ignored, whitespace is trimmed and matching quotes around a value are stripped. Process environment variables are not read
+- The file must be a regular file (no symlink) owned by the daemon user with no group or other permission bits. A missing file leaves the notifier off silently. An unsafe file, a missing key or invalid values (token up to 4096 bytes; chat ID an optional `-` and digits, up to 64 bytes) leave it off and write one generic `notifier.failed` audit event without values or paths
+- Credentials change only by editing the file and restarting the daemon. The daemon zeroes the token when it stops
 - On a new request the daemon sends a plain-text message (no markup parsing) with secret name, duration, reason and a link to the approval page; the message holds no value. A flag change sends a notice
 - Approval needs the passphrase on the approval page; a Telegram tap grants nothing
-- The daemon loads independent service credentials on cold startup and sends request and flag notices while the vault and saved grants stay locked. A notifier never reads a protected token or grants access
-- A successful unlock migrates encrypted settings only when the service file is absent. Configured or corrupt service settings take precedence; corruption produces a generic diagnostic. The notifier page shows configured, missing or unavailable state
-- Credential rotation cancels and awaits the prior transport, zeroes its token buffer and keeps the daemon-lifetime hourly budget and request deduplication state
+- With valid credentials the daemon sends request and flag notices from startup, while the vault and saved grants stay locked. A notifier never reads a protected token or grants access
+- One runner keeps the hourly budget and request deduplication state for the daemon lifetime
 - Logs and error messages contain no credentials
 
 ## Audit log
 
 - JSON lines at `~/.local/state/tokencrypt/audit.log`
-- Events: secret created/updated/renamed/deleted, flag set/cleared (with kind, actor and reason), request created/approved/denied/expired, grant started/ended/revoked/restored, login failure, notifier set, daemon unlocked
+- Events: secret created/updated/renamed/deleted, flag set/cleared (with kind, actor and reason), request created/approved/denied/expired, grant started/ended/revoked/restored, login failure, notifier delivery failed or dropped, daemon unlocked
 - Records contain no secret values, passphrases, notifier tokens or chat IDs
 - Audit events have a 2 MiB encoded-line limit. The audit viewer reads the newest 2 MiB, drops a partial starting line, and shows valid events from that window
 
@@ -147,17 +144,17 @@ Not protected:
 - Output the agent prints after a grant
 - An attacker holding both the passphrase and the vault
 - Edits to `meta.json` and the audit log by a process with file access
-- Reading or changing the independent notifier credential with local file access; vault encryption protects token values, while private file permissions protect this service credential
+- Reading or changing the Telegram env file with local file access; vault encryption protects token values, while the file's `0600` mode and ownership check protect this credential
 - Replay of an older `grants.json` that resurrects a revoked long grant after a restart; the restore step shows every restored grant for the user to confirm
 - Old vault copies after a passphrase change or delete
 
 ## Acceptance criteria
 
-- Protected vault ciphertext files contain no plaintext secret; notifier service credentials stay private and separate from secret grants
+- Protected vault ciphertext files contain no plaintext secret; the Telegram credentials stay outside the vault and separate from secret grants
 - With no grant, `get` and `run` fail; with a live grant, they return the value; after expiry or revoke, they fail again
 - Granting one secret does not make another readable
 - A wrong passphrase grants nothing and appears in the audit log
-- A request from the CLI appears in the web UI and in Telegram with configured service credentials, including after a locked daemon restart; Deny makes `get` fail
+- A request from the CLI appears in the web UI and in Telegram with a configured env file, including after a locked daemon restart; Deny makes `get` fail
 - Create, update, rename and delete each need the passphrase; read shows metadata only
 - Update value and rename revoke a live grant; the new value is what `get` returns after the next grant
 - A flag (`leaked` or `invalid`) set from the CLI or the web UI revokes live grants, denies pending requests, blocks `get`, `run`, `request` and grant, and appears in the audit log with kind and actor

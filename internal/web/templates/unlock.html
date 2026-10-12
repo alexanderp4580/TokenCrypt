@@ -1,4 +1,4 @@
-{{define "content"}}<section class="auth"><h1>Unlock</h1><p>Unlock the notifier and check saved grants.</p>
+{{define "content"}}<section class="auth"><h1>Unlock</h1><p>Unlock the vault and check saved grants.</p>
 <form method="post" action="/unlock"><input type="hidden" name="csrf" value="{{.CSRF}}">
 <label for="passphrase">Vault passphrase</label><input id="passphrase" type="password" name="passphrase" autocomplete="current-password" maxlength="4096" required>
 <button type="submit">Unlock</button></form></section>

@@ -51,7 +51,7 @@ func runWithInput(ctx context.Context, args []string, stdin io.Reader, stdout, s
 		case "serve":
 			opts, err := parseServe(args[1:])
 			if err != nil {
-				fmt.Fprintln(stderr, "usage: tokencrypt serve [--vault-dir DIR] [--state-dir DIR] [--socket PATH] [--listen IP:PORT] [--allowed-hosts HOSTS] [--secure-cookies] [--approval-url URL] [--telegram-api-base URL]")
+				fmt.Fprintln(stderr, "usage: tokencrypt serve [--vault-dir DIR] [--state-dir DIR] [--socket PATH] [--listen IP:PORT] [--allowed-hosts HOSTS] [--secure-cookies] [--approval-url URL] [--telegram-api-base URL] [--env-file PATH]")
 				return 2
 			}
 			if err := serve(ctx, opts); err != nil {
@@ -76,8 +76,8 @@ func runWithInput(ctx context.Context, args []string, stdin io.Reader, stdout, s
 
 type serveOptions struct {
 	daemon.Config
-	AllowedHosts, ApprovalURL, TelegramAPIBase string
-	SecureCookies                              bool
+	AllowedHosts, ApprovalURL, TelegramAPIBase, EnvFile string
+	SecureCookies                                       bool
 }
 
 func paths() (vaultDir, stateDir, socket string) {
@@ -103,6 +103,19 @@ func paths() (vaultDir, stateDir, socket string) {
 	return
 }
 
+// defaultEnvFile resolves $XDG_CONFIG_HOME/tokencrypt/telegram.env, falling
+// back to ~/.config/tokencrypt/telegram.env.
+func defaultEnvFile() string {
+	config := os.Getenv("XDG_CONFIG_HOME")
+	if home, _ := os.UserHomeDir(); config == "" && home != "" {
+		config = filepath.Join(home, ".config")
+	}
+	if config == "" {
+		return ""
+	}
+	return filepath.Join(config, "tokencrypt", "telegram.env")
+}
+
 func parseServe(args []string) (serveOptions, error) {
 	var opts serveOptions
 	vaultDir, stateDir, socket := paths()
@@ -116,6 +129,7 @@ func parseServe(args []string) (serveOptions, error) {
 	fs.BoolVar(&opts.SecureCookies, "secure-cookies", false, "")
 	fs.StringVar(&opts.ApprovalURL, "approval-url", "https://crypt.local", "")
 	fs.StringVar(&opts.TelegramAPIBase, "telegram-api-base", "", "")
+	fs.StringVar(&opts.EnvFile, "env-file", defaultEnvFile(), "")
 	if err := fs.Parse(args); err != nil {
 		return opts, err
 	}

@@ -162,16 +162,12 @@ type Status struct {
 	Error   string
 }
 
-// UnlockResult is what an unlock hands the daemon: the notifier credentials
-// (empty when none are stored; NotifierErr says why they could not be read)
-// and the long grants of an earlier run that the user may confirm. GrantsErr
-// reports corrupt grant storage without preventing authenticated unlock.
+// UnlockResult is what an unlock hands the daemon: the long grants of an
+// earlier run that the user may confirm. GrantsErr reports corrupt grant
+// storage without preventing authenticated unlock.
 type UnlockResult struct {
-	NotifierToken []byte
-	ChatID        string
-	NotifierErr   error
-	GrantsErr     error
-	Candidates    []grants.Grant
+	GrantsErr  error
+	Candidates []grants.Grant
 }
 
 type checker struct{ v *vault.Vault }
@@ -580,17 +576,6 @@ func (s *Service) SetDescription(name, description string) error {
 	return s.v.SetDescription(name, cleanDescription(description))
 }
 
-// SetNotifier stores the Telegram bot token and chat ID.
-func (s *Service) SetNotifier(token []byte, chatID string, pass []byte) error {
-	return s.withKey("set_notifier", "", actorUser, pass, func(*vault.Session) error {
-		if err := s.v.SetServiceNotifier(token, chatID); err != nil {
-			return err
-		}
-		return s.write(audit.Event{Type: audit.NotifierSet, Actor: actorUser,
-			Detail: "{}"})
-	})
-}
-
 // ClearFlag removes the flag of a secret. It does nothing if there is none.
 func (s *Service) ClearFlag(name string, pass []byte, actor string) error {
 	if !vault.ValidName(name) {
@@ -794,8 +779,8 @@ func corruptGrantsWarning() error {
 	return fmt.Errorf("%w: saved grants are unavailable; no grants were restored", grants.ErrCorrupt)
 }
 
-// Unlock verifies the passphrase after a start and returns the notifier
-// credentials and the long grants waiting for confirmation. With nothing to
+// Unlock verifies the passphrase after a start and returns the long grants
+// waiting for confirmation. With nothing to
 // confirm the locked state ends here; otherwise RestoreGrants ends it.
 func (s *Service) Unlock(pass []byte) (UnlockResult, error) {
 	var res UnlockResult
@@ -811,22 +796,6 @@ func (s *Service) Unlock(pass []byte) (UnlockResult, error) {
 		} else if err != nil {
 			return err
 		}
-		token, chat, nerr := s.v.LoadServiceNotifier()
-		if errors.Is(nerr, vault.ErrNoNotifier) {
-			legacy, legacyChat, legacyErr := sess.LoadNotifier()
-			if legacyErr == nil {
-				token, chat, nerr = s.v.MigrateServiceNotifier(legacy, legacyChat)
-				crypto.Zero(legacy)
-			} else {
-				nerr = legacyErr
-			}
-		}
-		switch {
-		case nerr == nil:
-			res.NotifierToken, res.ChatID = token, chat
-		case !errors.Is(nerr, vault.ErrNoNotifier):
-			res.NotifierErr = vault.ErrNotifierUnavailable
-		}
 		if len(res.Candidates) == 0 {
 			if err := s.g.Restore(nil, nil); err != nil {
 				return err
@@ -836,7 +805,6 @@ func (s *Service) Unlock(pass []byte) (UnlockResult, error) {
 		return s.write(audit.Event{Type: audit.DaemonUnlocked, Actor: actorUser})
 	})
 	if err != nil {
-		crypto.Zero(res.NotifierToken)
 		return UnlockResult{}, err
 	}
 	return res, nil

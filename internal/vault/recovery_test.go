@@ -10,7 +10,7 @@ import (
 )
 
 func TestOversizedVaultFilesRejectedBeforeDecode(t *testing.T) {
-	for _, typ := range []string{"header", "secret", "meta", "notifier"} {
+	for _, typ := range []string{"header", "secret", "meta"} {
 		t.Run(typ, func(t *testing.T) {
 			v, s, dir := newSession(t)
 			if err := s.Create("tok", "desc", canary); err != nil {
@@ -35,8 +35,6 @@ func TestOversizedVaultFilesRejectedBeforeDecode(t *testing.T) {
 				_, err = v.Get("tok")
 			case "meta":
 				_, err = v.List()
-			case "notifier":
-				_, _, err = s.LoadNotifier()
 			}
 			if !errors.Is(err, ErrCorrupt) || !strings.Contains(err.Error(), "size limit") {
 				t.Fatalf("oversized %s: %v", typ, err)
@@ -55,15 +53,6 @@ func TestOversizedVaultWritesPreserveReadableFiles(t *testing.T) {
 	}
 	if got, err := v.Get("tok"); err != nil || got.Description != "desc" {
 		t.Fatalf("metadata: %+v, %v", got, err)
-	}
-	if err := s.SetNotifier([]byte("fake"), "123"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.SetNotifier(bytes.Repeat([]byte{'x'}, 64<<10), "123"); err == nil {
-		t.Fatal("oversized notifier accepted")
-	}
-	if tok, _, err := s.LoadNotifier(); err != nil || string(tok) != "fake" {
-		t.Fatalf("notifier: %q, %v", tok, err)
 	}
 	before, err := os.ReadFile(filepath.Join(dir, "header.json"))
 	if err != nil {
@@ -126,26 +115,6 @@ func TestVaultRootNameDoesNotChangeFileLimits(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer s.Close()
-			t.Run("notifier", func(t *testing.T) {
-				if err := s.SetNotifier([]byte("fake-valid-token"), "123"); err != nil {
-					t.Fatal(err)
-				}
-				before, err := os.ReadFile(filepath.Join(dir, "notifier.json"))
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := s.SetNotifier(bytes.Repeat([]byte{'x'}, 64<<10), "123"); !errors.Is(err, ErrFileTooLarge) {
-					t.Errorf("oversized notifier: %v", err)
-				}
-				after, err := os.ReadFile(filepath.Join(dir, "notifier.json"))
-				if err != nil || !bytes.Equal(before, after) {
-					t.Error("oversized update changed notifier file")
-				}
-				token, chat, err := s.LoadNotifier()
-				if err != nil || string(token) != "fake-valid-token" || chat != "123" {
-					t.Fatalf("readable notifier: %q, %q, %v", token, chat, err)
-				}
-			})
 			t.Run("metadata", func(t *testing.T) {
 				if err := s.Create("tok", "desc", canary); err != nil {
 					t.Fatal(err)

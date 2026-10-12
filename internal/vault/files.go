@@ -9,9 +9,8 @@ import (
 
 // File limits include JSON and base64 overhead for the 1 MiB value limit.
 const (
-	maxVaultFileBytes    = 2 << 20
-	maxMetaFileBytes     = 8 << 20
-	maxNotifierFileBytes = 64 << 10
+	maxVaultFileBytes = 2 << 20
+	maxMetaFileBytes  = 8 << 20
 )
 
 // readBounded checks size before allocating and limits reads even if the file grows.

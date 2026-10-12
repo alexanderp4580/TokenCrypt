@@ -1,7 +1,7 @@
 // Package vault stores the wrapped master key, the encrypted secrets, their
-// plaintext metadata and flags and the encrypted notifier token in a
-// directory of JSON files. Secret create, update, rename, delete and reveal
-// go through an unlocked Session; metadata and flags need no key.
+// plaintext metadata and flags in a directory of JSON files. Secret create,
+// update, rename, delete and reveal go through an unlocked Session; metadata
+// and flags need no key.
 package vault
 
 import (

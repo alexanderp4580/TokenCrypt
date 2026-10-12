@@ -416,34 +416,6 @@ func TestRequestApprovalDenialAndEscaping(t *testing.T) {
 	}
 }
 
-func TestNotifierSettingsAreWriteOnly(t *testing.T) {
-	svc, clk, _ := testService(t)
-	h := Handler(svc, Config{AllowedHosts: []string{"crypt.local"}, Clock: clk})
-	a, csrf := login(t, h)
-	f := url.Values{"csrf": {csrf}, "token": {"fake-bot-token"}, "chat_id": {"9000000004"}, "passphrase": {"fake wrong pass"}}
-	w := request(h, "POST", "/notifier", f, a)
-	if w.Code != 400 {
-		t.Fatalf("wrong notifier pass: %d", w.Code)
-	}
-	assertRedacted(t, w)
-	f.Set("passphrase", fakePass)
-	w = request(h, "POST", "/notifier", f, a)
-	if w.Code != 303 {
-		t.Fatalf("notifier set: %d", w.Code)
-	}
-	assertRedacted(t, w)
-	w = request(h, "GET", "/notifier", nil, a)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "/unlock") {
-		t.Fatalf("notifier page: %d", w.Code)
-	}
-	assertRedacted(t, w)
-	res, err := svc.Unlock([]byte(fakePass))
-	if err != nil || string(res.NotifierToken) != "fake-bot-token" || res.ChatID != "9000000004" {
-		t.Fatal("settings not stored", err)
-	}
-	crypto.Zero(res.NotifierToken)
-}
-
 func TestManagementFormsShareAuthenticationBoundary(t *testing.T) {
 	svc, clk, _ := testService(t)
 	createPageSecret(t, svc, "fake_token")
@@ -452,7 +424,7 @@ func TestManagementFormsShareAuthenticationBoundary(t *testing.T) {
 	}
 	h := Handler(svc, Config{AllowedHosts: []string{"crypt.local"}, Clock: clk})
 	a, _ := login(t, h)
-	for _, path := range []string{"/secrets", "/secrets/edit?name=fake_token", "/grants", "/requests", "/notifier", "/audit", "/unlock"} {
+	for _, path := range []string{"/secrets", "/secrets/edit?name=fake_token", "/grants", "/requests", "/audit", "/unlock"} {
 		w := request(h, "GET", path, nil, a)
 		if w.Code != 200 {
 			t.Fatalf("page %s: %d", path, w.Code)
@@ -470,7 +442,7 @@ func TestManagementFormsShareAuthenticationBoundary(t *testing.T) {
 			t.Fatalf("anonymous page %s: %d", path, w.Code)
 		}
 	}
-	for _, path := range []string{"/secrets/create", "/secrets/update", "/secrets/rename", "/secrets/delete", "/secrets/description", "/secrets/flag", "/secrets/clear", "/grants", "/grants/revoke", "/requests/approve", "/requests/deny", "/notifier"} {
+	for _, path := range []string{"/secrets/create", "/secrets/update", "/secrets/rename", "/secrets/delete", "/secrets/description", "/secrets/flag", "/secrets/clear", "/grants", "/grants/revoke", "/requests/approve", "/requests/deny"} {
 		if w := request(h, "POST", path, url.Values{"name": {"fake_token"}, "value": {pageCanary}, "passphrase": {fakePass}}, a); w.Code != 403 {
 			t.Fatalf("CSRF bypass %s: %d", path, w.Code)
 		}
@@ -529,33 +501,5 @@ func TestValueFormsPermitEmptySecrets(t *testing.T) {
 	defer crypto.Zero(value)
 	if err != nil || len(value) != 0 {
 		t.Fatal("empty value did not round-trip", err)
-	}
-}
-
-func TestNotifierPageNotesEnvironmentOverride(t *testing.T) {
-	const note = "Environment credentials override saved settings"
-	for _, env := range []bool{false, true} {
-		svc, clk, _ := testService(t)
-		h := Handler(svc, Config{AllowedHosts: []string{"crypt.local"}, Clock: clk, EnvNotifier: env})
-		a, _ := login(t, h)
-		w := request(h, "GET", "/notifier", nil, a)
-		if w.Code != 200 || strings.Contains(w.Body.String(), note) != env {
-			t.Fatalf("env %v: status %d, note present %v", env, w.Code, strings.Contains(w.Body.String(), note))
-		}
-	}
-}
-
-func TestNotifierRejectsInvalidChatID(t *testing.T) {
-	svc, clk, _ := testService(t)
-	h := Handler(svc, Config{AllowedHosts: []string{"crypt.local"}, Clock: clk})
-	a, csrf := login(t, h)
-	for _, chat := range []string{"abc", "12 34", "@channel", "1-2"} {
-		f := url.Values{"csrf": {csrf}, "token": {"fake-bot-token"}, "chat_id": {chat}, "passphrase": {fakePass}}
-		if w := request(h, "POST", "/notifier", f, a); w.Code != 400 {
-			t.Fatalf("chat %q: status %d", chat, w.Code)
-		}
-	}
-	if n := svc.Notifier(); len(n.NotifierToken) != 0 {
-		t.Fatal("invalid chat ID stored")
 	}
 }

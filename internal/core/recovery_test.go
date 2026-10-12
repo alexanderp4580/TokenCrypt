@@ -14,12 +14,9 @@ import (
 	"tokencrypt/internal/vault"
 )
 
-func TestUnlockCorruptGrantsLoadsNotifierAndEndsLock(t *testing.T) {
+func TestUnlockCorruptGrantsEndsLock(t *testing.T) {
 	e := newEnv(t)
 	e.create(secretName, canary)
-	if err := e.svc.SetNotifier([]byte(botToken), chatID, []byte(pass)); err != nil {
-		t.Fatal(err)
-	}
 	e.restart()
 	p := filepath.Join(e.dir, "grants.json")
 	bad := []byte("broken grants")
@@ -33,7 +30,7 @@ func TestUnlockCorruptGrantsLoadsNotifierAndEndsLock(t *testing.T) {
 	if !errors.Is(res.GrantsErr, grants.ErrCorrupt) || strings.Contains(res.GrantsErr.Error(), "broken grants") {
 		t.Fatalf("unsafe or missing warning: %v", res.GrantsErr)
 	}
-	if string(res.NotifierToken) != botToken || res.ChatID != chatID || len(res.Candidates) != 0 {
+	if len(res.Candidates) != 0 {
 		t.Fatalf("result: %+v", res)
 	}
 	if e.svc.Status().Locked {

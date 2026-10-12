@@ -15,19 +15,6 @@ func (s *server) page(w http.ResponseWriter, name string, code int, x session, m
 	if d.State.Error != "" {
 		d.Error = "Secret list unavailable. Check the vault storage."
 	}
-	if name == "notifier" {
-		d.NotifierEnv = s.cfg.EnvNotifier
-		n := s.svc.Notifier()
-		switch {
-		case n.NotifierErr != nil:
-			d.NotifierState = "Notifier credentials are unavailable. Save settings to configure delivery."
-		case len(n.NotifierToken) == 0:
-			d.NotifierState = "Notifications are inactive: no service credentials are configured. Save settings, or unlock to migrate encrypted settings."
-		default:
-			d.NotifierState = "Notifier configured. Notifications start automatically, including while the vault is locked."
-		}
-		crypto.Zero(n.NotifierToken)
-	}
 	for _, m := range d.State.Secrets {
 		if !m.Corrupt && m.Flag == nil {
 			d.GrantSecrets = append(d.GrantSecrets, m)

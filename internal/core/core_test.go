@@ -26,8 +26,6 @@ const (
 	pass        = "fake-vault-passphrase-0001"
 	wrongPass   = "fake-wrong-passphrase-0002"
 	canary      = "CANARY-VALUE-7f3a91"
-	botToken    = "fake-bot-token-55aa"
-	chatID      = "424242"
 	secretName  = "api_token"
 	secondName  = "other_token"
 	smallKDFMem = 64
@@ -189,8 +187,7 @@ func TestWrongPassphraseFailsChangesNothingAndIsAudited(t *testing.T) {
 			_, err := e.svc.Grant(secretName, time.Hour, p, "user", "")
 			return err
 		},
-		"clear_flag":   func(e *env, p []byte) error { return e.svc.ClearFlag(secretName, p, "user") },
-		"set_notifier": func(e *env, p []byte) error { return e.svc.SetNotifier([]byte(botToken), chatID, p) },
+		"clear_flag": func(e *env, p []byte) error { return e.svc.ClearFlag(secretName, p, "user") },
 		"unlock": func(e *env, p []byte) error {
 			_, err := e.svc.Unlock(p)
 			return err
@@ -214,9 +211,6 @@ func TestWrongPassphraseFailsChangesNothingAndIsAudited(t *testing.T) {
 				!after.Secrets[0].Updated.Equal(before.Secrets[0].Updated) ||
 				!bytes.Equal(after.Secrets[0].KeyID, before.Secrets[0].KeyID) || len(after.Grants) != 0 {
 				t.Errorf("state changed: before %+v after %+v", before, after)
-			}
-			if _, err := os.Stat(filepath.Join(e.dir, "notifier.json")); err == nil {
-				t.Error("notifier was stored")
 			}
 			failed := e.auditOf(audit.LoginFailed)
 			if len(failed) != 1 {
@@ -301,7 +295,7 @@ func TestFailuresAcrossOperationsShareOneThrottle(t *testing.T) {
 	_ = e.svc.Create("n", "", []byte("x"), bad, "user")
 	_ = e.svc.UpdateValue(secretName, []byte("y"), bad, "user")
 	_, _ = e.svc.Grant(secretName, time.Minute, bad, "user", "")
-	_ = e.svc.SetNotifier([]byte("t"), "1", bad)
+	_ = e.svc.Rename(secretName, "renamed_one", bad, "user")
 	if err := e.svc.Verify([]byte(pass)); !errors.Is(err, ErrThrottled) {
 		t.Fatalf("Verify = %v, want ErrThrottled after five mixed failures", err)
 	}
@@ -983,9 +977,6 @@ func TestUnlockRestoresOnlyConfirmedLongGrants(t *testing.T) {
 	e.create(secretName, canary)
 	e.create(secondName, "OTHER-"+canary)
 	e.create("short_one", "SHORT-"+canary)
-	if err := e.svc.SetNotifier([]byte(botToken), chatID, []byte(pass)); err != nil {
-		t.Fatal(err)
-	}
 	keep := e.grant(secretName, 24*time.Hour)
 	e.grant(secondName, 48*time.Hour)
 	e.grant("short_one", 30*time.Minute)
@@ -1003,9 +994,6 @@ func TestUnlockRestoresOnlyConfirmedLongGrants(t *testing.T) {
 	res, err := e.svc.Unlock([]byte(pass))
 	if err != nil {
 		t.Fatal(err)
-	}
-	if string(res.NotifierToken) != botToken || res.ChatID != chatID || res.NotifierErr != nil {
-		t.Errorf("notifier = %q %q %v", res.NotifierToken, res.ChatID, res.NotifierErr)
 	}
 	if len(res.Candidates) != 2 {
 		t.Fatalf("candidates = %+v, want the two long grants", res.Candidates)
@@ -1074,14 +1062,34 @@ func TestRestoreSkipsGrantOfSecretFlaggedWhileDown(t *testing.T) {
 	}
 }
 
-func TestUnlockWithoutNotifierOrCandidatesFinishesUnlock(t *testing.T) {
+func TestUnlockIgnoresStrayNotifierFiles(t *testing.T) {
+	e := newEnv(t)
+	e.create(secretName, canary)
+	if err := os.WriteFile(filepath.Join(e.dir, "notifier.json"), []byte("fake-stray-notifier"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(e.dir, "service"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.dir, "service", "notifier.json"), []byte("fake-stray-service"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.restart()
+	if _, err := e.svc.Unlock([]byte(pass)); err != nil {
+		t.Fatal(err)
+	}
+	e.grant(secretName, time.Hour)
+	e.mustRead(secretName, canary)
+}
+
+func TestUnlockWithoutCandidatesFinishesUnlock(t *testing.T) {
 	e := newEnv(t)
 	e.restart()
 	res, err := e.svc.Unlock([]byte(pass))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.NotifierToken != nil || res.ChatID != "" || res.NotifierErr != nil || len(res.Candidates) != 0 {
+	if len(res.Candidates) != 0 {
 		t.Errorf("result = %+v", res)
 	}
 	if e.svc.Status().Locked {
@@ -1089,47 +1097,15 @@ func TestUnlockWithoutNotifierOrCandidatesFinishesUnlock(t *testing.T) {
 	}
 }
 
-func TestUnlockReportsCorruptNotifierButStillListsCandidates(t *testing.T) {
-	e := newEnv(t)
-	e.create(secretName, canary)
-	e.grant(secretName, 24*time.Hour)
-	sess, err := e.v.Unlock([]byte(pass))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := sess.SetNotifier([]byte(botToken), chatID); err != nil {
-		t.Fatal(err)
-	}
-	sess.Close()
-	// Edit the stored chat ID so the notifier no longer authenticates.
-	p := filepath.Join(e.dir, "notifier.json")
-	raw, _ := os.ReadFile(p)
-	raw = bytes.Replace(raw, []byte(chatID), []byte("999999"), 1)
-	if err := os.WriteFile(p, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	e.restart()
-	res, err := e.svc.Unlock([]byte(pass))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !errors.Is(res.NotifierErr, vault.ErrNotifierUnavailable) || res.NotifierToken != nil || len(res.Candidates) != 1 {
-		t.Errorf("result = %+v", res)
-	}
-}
-
 // Audit hygiene --------------------------------------------------------------
 
-func TestAuditHoldsNoValuePassphraseOrBotToken(t *testing.T) {
+func TestAuditHoldsNoValueOrPassphrase(t *testing.T) {
 	e := newEnv(t)
 	e.create(secretName, canary)
 	e.create(secondName, canary)
 	_ = e.svc.Verify([]byte(wrongPass))
 	_ = e.svc.UpdateValue(secretName, []byte("new-"+canary), []byte(wrongPass), "user")
 	e.grant(secretName, 24*time.Hour)
-	if err := e.svc.SetNotifier([]byte(botToken), chatID, []byte(pass)); err != nil {
-		t.Fatal(err)
-	}
 	r, _ := e.svc.Request(secondName, "needs it", time.Hour)
 	_, _ = e.svc.Grant(secondName, time.Hour, []byte(pass), "user", r.ID)
 	_ = e.svc.UpdateValue(secretName, []byte("new-"+canary), []byte(pass), "user")
@@ -1145,7 +1121,7 @@ func TestAuditHoldsNoValuePassphraseOrBotToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []string{canary, pass, wrongPass, botToken} {
+	for _, bad := range []string{canary, pass, wrongPass} {
 		if bytes.Contains(raw, []byte(bad)) {
 			t.Errorf("audit log contains %q", bad)
 		}
@@ -1153,7 +1129,7 @@ func TestAuditHoldsNoValuePassphraseOrBotToken(t *testing.T) {
 	for _, typ := range []string{
 		audit.SecretCreated, audit.SecretUpdated, audit.SecretRenamed, audit.SecretDeleted,
 		audit.FlagSet, audit.FlagCleared, audit.RequestCreated, audit.RequestApproved,
-		audit.GrantStarted, audit.GrantRevoked, audit.LoginFailed, audit.NotifierSet,
+		audit.GrantStarted, audit.GrantRevoked, audit.LoginFailed,
 	} {
 		if len(e.auditOf(typ)) == 0 {
 			t.Errorf("no %s event written", typ)
@@ -1163,7 +1139,7 @@ func TestAuditHoldsNoValuePassphraseOrBotToken(t *testing.T) {
 	_ = filepath.Walk(e.dir, func(p string, fi os.FileInfo, err error) error {
 		if err == nil && !fi.IsDir() {
 			b, _ := os.ReadFile(p)
-			if bytes.Contains(b, []byte(canary)) || bytes.Contains(b, []byte(botToken)) {
+			if bytes.Contains(b, []byte(canary)) {
 				t.Errorf("%s holds plaintext", p)
 			}
 		}

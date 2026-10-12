@@ -18,8 +18,8 @@ type Transport interface {
 }
 
 // Runner keeps the notification budget and request deduplication state for one
-// daemon lifetime. Keep the same Runner when notifier credentials change.
-// It holds no credentials; each Start receives the current transport and chat.
+// daemon lifetime. It holds no credentials; each Start receives the transport
+// and chat.
 type Runner struct {
 	mu           sync.Mutex
 	clk          clock.Clock
@@ -34,17 +34,14 @@ func NewRunner(clk clock.Clock) *Runner {
 }
 
 // Start consumes service events until cancellation or service closure using a
-// fresh Runner. A daemon that replaces credentials uses NewRunner and Runner.Start
-// so its hourly budget and request IDs survive those replacements.
+// fresh Runner.
 func Start(ctx context.Context, svc *core.Service, t Transport, chatID, approvalBaseURL string, clk clock.Clock) {
 	NewRunner(clk).Start(ctx, svc, t, chatID, approvalBaseURL)
 }
 
-// Start blocks while consuming events. The daemon starts it with its service
-// credentials, then cancels and awaits it before replacing credentials or closing
-// the service. Telegram honors ctx; other transports must bound Send themselves.
-// Shared budget access is synchronized, but callers must keep event consumption
-// sequential to ensure delivery uses the current credentials.
+// Start blocks while consuming events. The daemon cancels and awaits it before
+// closing the service. Telegram honors ctx; other transports must bound Send
+// themselves. Callers keep event consumption sequential.
 func (r *Runner) Start(ctx context.Context, svc *core.Service, t Transport, chatID, approvalBaseURL string) {
 	r.run(ctx, svc.Events(), svc.LogNotifierEvent, t, chatID, approvalBaseURL)
 }

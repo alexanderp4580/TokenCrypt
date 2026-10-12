@@ -24,7 +24,7 @@ The final real-container suite passed the named tests. The end-to-end assertions
 
 | Criterion | Evidence | Result |
 |---|---|---|
-| Ciphertext contains no secret or bot token | E2E vault scan; vault `TestNoPlaintextOnDisk`, `TestNotifierRoundTrip` | Passed |
+| Ciphertext contains no secret or bot token | E2E vault scan; vault `TestNoPlaintextOnDisk` | Passed |
 | No grant, live grant, expiry and revoke | E2E get/run/revoke; grants `TestReadReturnsValueUntilExpires` | Passed |
 | Grant isolates the selected secret | E2E alpha/beta; core `TestGrantOfOneSecretLeavesAnotherUnreadable` | Passed |
 | Wrong passphrase grants nothing and is audited | E2E wrong-passphrase/audit assertions | Passed |
@@ -35,7 +35,7 @@ The final real-container suite passed the named tests. The end-to-end assertions
 | CLI cannot clear flag; new value clears it | CLI usage tests; E2E clear refusal and replacement | Passed |
 | Long-grant restart requires unlock and confirmation; invalid records stay blocked | E2E killed-daemon restart; grants `TestCandidatesKeepOnlyVerifiedCurrentRecords`, `TestRestoreRechecksFlagKeyAndReveal` | Passed |
 | Duration limit is 90 days | core `TestGrantDurationBounds`; web `TestGrantChoicesCountdownAndRevoke` | Passed |
-| Website and metadata API omit stored values | E2E pages/status; web CRUD and notifier tests; CLI escaped-status test | Passed |
+| Website and metadata API omit stored values | E2E pages/status; web CRUD tests; CLI escaped-status test | Passed |
 | Swapped ciphertext fails to decrypt | vault `TestSwappedFilesFail` | Passed |
 | Socket 0700/0600 and same-uid admission | API `TestSocketPermissionsReadAndCancellation`, `TestPeerUIDCheckedForEachConnection`; E2E socket mode | Passed |
 | Invalid names fail | vault `TestNames`; core `TestCreateRejectsDuplicateAndBadName` | Passed |
@@ -43,19 +43,18 @@ The final real-container suite passed the named tests. The end-to-end assertions
 | Pending-request limit and escaped/plain-text reasons | core `TestEleventhPendingRequestIsRefusedUntilOneEnds`; web request tests; E2E escaped reason and fake Telegram | Passed |
 | Crash before atomic rename preserves the previous file | vault `TestCrashBeforeRename` and write recovery tests | Passed |
 | Fake-clock expiry, HTTP, flag, restore/MAC, socket and fake-Telegram tests | Final full race suite | Passed |
-| First-run setup and daemon lifetime credential replacement | E2E setup/lock/init; main `TestNotifierReplacementCancelsPriorDeliveryAndZeroesCredentials` | Passed |
+| First-run setup and daemon lifetime | E2E setup/lock/init; main `TestNotifierEnvFileWorksLockedAndHidesToken` | Passed |
 
-## Notifier startup checks (2026-10-12)
+## Notifier env-file checks (2026-10-12)
 
 | Command / behavior | Observed result |
 |---|---|
-| `toolchain/run go test ./cmd/tokencrypt -run TestConfiguredNotifierStartsLockedAfterRestart -count=1` on the baseline with the new regression | Failed, exit 1: locked cold-start request produced no Telegram notice |
-| Same regression after startup/service-credential wiring | Passed, exit 0; two locked starts delivered request and flag notices while protected reads stayed denied; token expiry survived |
-| `toolchain/run go test ./internal/core ./internal/vault -run 'Notifier' -count=1` | Passed, exit 0; successful-unlock migration, current/corrupt service-file precedence, private modes, bounded reads and atomic failure safety |
-| `toolchain/run go test ./cmd/tokencrypt -run 'TestConfiguredNotifier\|TestNotifierSettings' -count=1` | Passed, exit 0; actual CLI/socket startup and authenticated HTTP save/rotation/restart used local fake Telegram only |
-| Final `toolchain/check` | Passed, exit 0; formatting, vet, full race suite and 41 process e2e PASS assertions. Cold process restart delivered fake Telegram before login or unlock, while the saved long grant stayed locked |
+| `toolchain/run go test -race ./internal/notify ./cmd/tokencrypt` | Passed, exit 0; env-file parsing (quotes, whitespace, comments, unknown keys, CRLF), rejection of symlink, modes `0640`/`0644`, wrong owner, oversized file, partial and invalid values, and missing file as not configured |
+| Main tests `TestNotifierEnvFileWorksLockedAndHidesToken`, `TestConfiguredNotifierStartsLockedAfterRestart` | Passed; fake Telegram received request and flag notices on a locked daemon across two starts, protected reads stayed denied, token and chat ID absent from the audit log and pages |
+| Main tests `TestNotifierUnusableEnvFileIsOffWithOneGenericAuditEvent`, `TestNotifierMissingEnvFileIsOffWithoutAuditEvent`, `TestNotifierIgnoresProcessEnvironment`, `TestStrayNotifierFilesInVaultAreIgnored` | Passed; one generic `notifier.failed` event per unusable file, none for a missing file, process environment ignored, stray vault files ignored |
+| Final `toolchain/check` | Passed, exit 0; formatting, vet, full race suite and 39 process e2e PASS assertions. The e2e harness wrote a `0600` env file and passed `--env-file`; cold process restart delivered fake Telegram before login or unlock, while the saved long grant stayed locked |
 
-The corrupt-startup regression confirms a generic audit diagnostic and denied protected reads. Migration tests compare the vault header, token ciphertext, encrypted notifier source and saved grants byte-for-byte. Service credentials live in `service/notifier.json` outside vault encryption; no agent API route exposes them. Live Telegram delivery and production settings remain coordinator checks.
+Live Telegram delivery from the env file remains a coordinator check.
 
 ## Device and browser checks
 
@@ -66,5 +65,5 @@ The corrupt-startup regression confirms a generic audit diagnostic and denied pr
 | Same-uid `/proc/PID/mem` and `strace -p` | Passed: coordinator observed permission denial; strace exits 1 with Operation not permitted |
 | Key and live-grant memory locks | Automated locking/release tests passed; tests check page-isolated buffers without exposing credential values |
 | Suspend/resume expiry | Not run: user requested uninterrupted completion; fake-clock wall/monotonic expiry tests passed |
-| Live Telegram account | Passed: requests from the production daemon reached the configured Telegram chat using environment credentials while the vault was locked |
+| Live Telegram account with the env file | Not run (to check) |
 

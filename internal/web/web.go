@@ -30,15 +30,6 @@ type Config struct {
 	SecureCookies bool
 	IdleTimeout   time.Duration
 	Clock         clock.Clock
-	// OnUnlock takes ownership of NotifierToken and must zero it once it is
-	// no longer needed. It is called after a successful unlock.
-	OnUnlock func(core.UnlockResult)
-	// EnvNotifier reports that environment credentials configure the notifier;
-	// the notifier page then notes that they override saved settings.
-	EnvNotifier bool
-	// OnNotifier reconciles current independent settings after a save attempt
-	// or an unlock error; unchanged credentials preserve the current transport.
-	OnNotifier func()
 	// InitParams overrides DefaultParams for controlled bootstrap tests.
 	// Production callers leave it nil.
 	InitParams *crypto.Params
@@ -64,8 +55,6 @@ type pageData struct {
 	Audit                       []auditRow
 	ExpiryChoice, ExpiryDate    string
 	ExpiryChoices               []expiryChoice
-	NotifierState               string
-	NotifierEnv                 bool
 }
 
 func newServer(svc *core.Service, cfg Config) *server {
@@ -77,7 +66,7 @@ func newServer(svc *core.Service, cfg Config) *server {
 	}
 	cfg.AllowedHosts = append([]string(nil), cfg.AllowedHosts...)
 	s := &server{svc: svc, cfg: cfg, sessions: &sessionStore{items: map[string]session{}, clk: cfg.Clock, timeout: cfg.IdleTimeout}, templates: map[string]*template.Template{}}
-	for _, name := range []string{"login", "setup", "home", "unlock", "secrets", "edit", "grants", "requests", "notifier", "audit"} {
+	for _, name := range []string{"login", "setup", "home", "unlock", "secrets", "edit", "grants", "requests", "audit"} {
 		funcs := template.FuncMap{"expiryDate": expiryDateLabel, "expiryRemaining": func(date string) string { return expiryRemaining(date, cfg.Clock.Wall()) }, "remaining": func(end time.Time) string {
 			left := end.Sub(cfg.Clock.Wall().Round(0))
 			if left <= 0 {
@@ -146,8 +135,6 @@ func Handler(svc *core.Service, cfg Config) http.Handler {
 			s.page(w, "requests", 200, x, "", "")
 		case "/requests/approve", "/requests/deny":
 			s.requestAction(w, r, x)
-		case "/notifier":
-			s.notifier(w, r, x)
 		case "/audit":
 			s.auditPage(w, r, x)
 		case "/logout":
@@ -324,11 +311,6 @@ func (s *server) unlock(w http.ResponseWriter, r *http.Request, x session) {
 	defer crypto.Zero(pass)
 	res, err := s.svc.Unlock(pass)
 	if err != nil {
-		// Authenticated migration can stand despite its final sync or audit error.
-		// Refresh only independent settings; a failed passphrase decrypts nothing.
-		if s.cfg.OnNotifier != nil {
-			s.cfg.OnNotifier()
-		}
 		status, message := authError(err)
 		d.Error = message
 		s.render(w, "unlock", status, d)
@@ -342,14 +324,6 @@ func (s *server) unlock(w http.ResponseWriter, r *http.Request, x session) {
 	}
 	if res.GrantsErr != nil {
 		d.Error = "Saved grants are unavailable. No grants were restored."
-	}
-	if res.NotifierErr != nil {
-		d.Error += " Notifier credentials are unavailable."
-	}
-	if s.cfg.OnUnlock != nil {
-		s.cfg.OnUnlock(res)
-	} else {
-		crypto.Zero(res.NotifierToken)
 	}
 	s.render(w, "unlock", 200, d)
 }
