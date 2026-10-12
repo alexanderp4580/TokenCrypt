@@ -127,7 +127,7 @@ func parseServe(args []string) (serveOptions, error) {
 	fs.StringVar(&opts.Listen, "listen", "127.0.0.1:8765", "")
 	fs.StringVar(&opts.AllowedHosts, "allowed-hosts", "crypt.local,localhost,127.0.0.1", "")
 	fs.BoolVar(&opts.SecureCookies, "secure-cookies", false, "")
-	fs.StringVar(&opts.ApprovalURL, "approval-url", "https://crypt.local", "")
+	fs.StringVar(&opts.ApprovalURL, "approval-url", "http://crypt.local", "")
 	fs.StringVar(&opts.TelegramAPIBase, "telegram-api-base", "", "")
 	fs.StringVar(&opts.EnvFile, "env-file", defaultEnvFile(), "")
 	if err := fs.Parse(args); err != nil {

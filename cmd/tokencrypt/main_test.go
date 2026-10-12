@@ -99,3 +99,14 @@ func TestServeEnvFileDefaultsAndOverride(t *testing.T) {
 		t.Fatalf("override: %q, %v", opts.EnvFile, err)
 	}
 }
+
+func TestServeApprovalURLDefaultIsPlainHTTP(t *testing.T) {
+	opts, err := parseServe(nil)
+	if err != nil || opts.ApprovalURL != "http://crypt.local" {
+		t.Fatalf("default: %q, %v", opts.ApprovalURL, err)
+	}
+	opts, err = parseServe([]string{"--approval-url", "https://vault.example"})
+	if err != nil || opts.ApprovalURL != "https://vault.example" {
+		t.Fatalf("override: %q, %v", opts.ApprovalURL, err)
+	}
+}

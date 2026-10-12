@@ -69,7 +69,7 @@ After a daemon restart, unlock and confirm each saved long grant you want back. 
 
 ## HTTPS and tests
 
-For HTTPS, add the public hostname to `--allowed-hosts`, pass `--secure-cookies` and set `--approval-url` to the HTTPS URL. TokenCrypt ignores forwarded identity headers and always asks for the vault passphrase. `--telegram-api-base` points the notifier at a fake server in tests; it defaults to Telegram's API.
+`--approval-url` defaults to `http://crypt.local`. For HTTPS, add the public hostname to `--allowed-hosts`, pass `--secure-cookies` and set `--approval-url` to the HTTPS URL. TokenCrypt ignores forwarded identity headers and always asks for the vault passphrase. `--telegram-api-base` points the notifier at a fake server in tests; it defaults to Telegram's API.
 
 - [Design](docs/design.md)
 - [Implementation plan](docs/implementation-plan.md)
