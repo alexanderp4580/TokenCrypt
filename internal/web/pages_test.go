@@ -503,3 +503,125 @@ func TestValueFormsPermitEmptySecrets(t *testing.T) {
 		t.Fatal("empty value did not round-trip", err)
 	}
 }
+
+func TestRequestRejectionsFromTheRequestsPage(t *testing.T) {
+	svc, clk, _ := testService(t)
+	createPageSecret(t, svc, "fake_token")
+	first, err := svc.Request("fake_token", "first fake reason", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := svc.Request("fake_token", "second fake reason", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := Handler(svc, Config{AllowedHosts: []string{"crypt.local"}, Clock: clk})
+	a, csrf := login(t, h)
+	body := request(h, "GET", "/requests", nil, a).Body.String()
+	if strings.Count(body, `action="/requests/deny"`) != 2 || !strings.Contains(body, ">Reject<") || strings.Contains(body, ">Deny<") {
+		t.Fatalf("each pending request needs a Reject button: %s", body)
+	}
+	if strings.Index(body, ">Reject<") > strings.Index(body, ">Approve<") {
+		t.Fatal("Reject must come before the long approval form")
+	}
+	if strings.Count(body, `action="/requests/deny-all"`) != 1 || !strings.Contains(body, "Reject all (2)") {
+		t.Fatalf("missing reject-all form: %s", body)
+	}
+	// Rejecting one leaves the other.
+	if w := request(h, "POST", "/requests/deny", url.Values{"csrf": {csrf}, "id": {first.ID}}, a); w.Code != 303 || w.Header().Get("Location") != "/requests" {
+		t.Fatalf("reject: %d", w.Code)
+	}
+	if st := svc.Status(); len(st.Pending) != 1 || st.Pending[0].ID != second.ID {
+		t.Fatalf("pending after single reject: %+v", st.Pending)
+	}
+	if body = request(h, "GET", "/requests", nil, a).Body.String(); strings.Contains(body, "deny-all") {
+		t.Fatal("reject-all shown for a single request")
+	}
+	third, err := svc.Request("fake_token", "third fake reason", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A request that is already settled does not stop the others.
+	if err := svc.Deny(third.ID, "user"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Request("fake_token", "fourth fake reason", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(h, "POST", "/requests/deny-all", url.Values{"csrf": {"wrong"}}, a); w.Code != 403 {
+		t.Fatalf("reject-all without CSRF: %d", w.Code)
+	}
+	if w := request(h, "POST", "/requests/deny-all", url.Values{"csrf": {csrf}}, a); w.Code != 303 || w.Header().Get("Location") != "/requests" {
+		t.Fatalf("reject-all: %d", w.Code)
+	}
+	if st := svc.Status(); len(st.Pending) != 0 {
+		t.Fatalf("pending after reject-all: %+v", st.Pending)
+	}
+	done, err := svc.Wait(context.Background(), second.ID)
+	if err != nil || done.State != core.StateDenied {
+		t.Fatal("reject-all did not deny", err)
+	}
+	if w := request(h, "GET", "/requests/deny-all", nil, a); w.Code != 405 {
+		t.Fatalf("GET reject-all: %d", w.Code)
+	}
+}
+
+func TestExpiredRequestRejectShowsMessage(t *testing.T) {
+	svc, clk, _ := testService(t)
+	createPageSecret(t, svc, "fake_token")
+	r, err := svc.Request("fake_token", "fake reason", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := Handler(svc, Config{AllowedHosts: []string{"crypt.local"}, Clock: clk})
+	a, csrf := login(t, h)
+	clk.AdvanceWall(11 * time.Minute)
+	clk.AdvanceMono(11 * time.Minute)
+	w := request(h, "POST", "/requests/deny", url.Values{"csrf": {csrf}, "id": {r.ID}}, a)
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "Request unavailable") || !strings.Contains(w.Body.String(), "No pending requests.") {
+		t.Fatalf("expired reject: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestLoginReturnsToRequestedPage(t *testing.T) {
+	svc, clk, _ := testService(t)
+	h := Handler(svc, Config{AllowedHosts: []string{"crypt.local"}, Clock: clk})
+	for _, page := range []string{"/requests", "/grants", "/audit", "/secrets"} {
+		w := request(h, "GET", page, nil)
+		if w.Code != 303 || w.Header().Get("Location") != "/login?next="+url.QueryEscape(page) {
+			t.Fatalf("redirect for %s: %d %q", page, w.Code, w.Header().Get("Location"))
+		}
+		get := request(h, "GET", w.Header().Get("Location"), nil)
+		if !strings.Contains(get.Body.String(), `name="next" value="`+page+`"`) {
+			t.Fatalf("login form lost next for %s: %s", page, get.Body.String())
+		}
+		post := request(h, "POST", "/login", url.Values{"csrf": {token(t, get)}, "passphrase": {fakePass}, "next": {page}}, formCookie(t, get))
+		if post.Code != 303 || post.Header().Get("Location") != page {
+			t.Fatalf("login for %s: %d %q", page, post.Code, post.Header().Get("Location"))
+		}
+	}
+	// Already signed in: the login page forwards to next.
+	a, _ := login(t, h)
+	if w := request(h, "GET", "/login?next=%2Frequests", nil, a); w.Code != 303 || w.Header().Get("Location") != "/requests" {
+		t.Fatalf("signed-in login forward: %d %q", w.Code, w.Header().Get("Location"))
+	}
+}
+
+func TestLoginIgnoresUnsafeNext(t *testing.T) {
+	svc, clk, _ := testService(t)
+	h := Handler(svc, Config{AllowedHosts: []string{"crypt.local"}, Clock: clk})
+	for _, next := range []string{"//evil", "https://x", `/\evil`, "/unknown", "/requests/deny", "/requests?x=1", "", "requests", "/requests/../secrets/create"} {
+		get := request(h, "GET", "/login?next="+url.QueryEscape(next), nil)
+		if strings.Contains(get.Body.String(), `name="next"`) {
+			t.Fatalf("unsafe next %q rendered", next)
+		}
+		post := request(h, "POST", "/login", url.Values{"csrf": {token(t, get)}, "passphrase": {fakePass}, "next": {next}}, formCookie(t, get))
+		if post.Code != 303 || post.Header().Get("Location") != "/" {
+			t.Fatalf("next %q: %d %q", next, post.Code, post.Header().Get("Location"))
+		}
+	}
+	// A POST to a protected path does not become a next value.
+	if w := request(h, "POST", "/requests/deny", url.Values{"id": {"x"}}); w.Header().Get("Location") != "/login" {
+		t.Fatalf("POST redirect: %q", w.Header().Get("Location"))
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,6 +46,7 @@ type server struct {
 
 type pageData struct {
 	Title, CSRF, Message, Error string
+	Next                        string
 	Authenticated               bool
 	Candidates                  []grants.Grant
 	Section                     string
@@ -104,7 +106,11 @@ func Handler(svc *core.Service, cfg Config) http.Handler {
 		}
 		x, ok := s.sessions.get(r, true)
 		if !ok {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			target := "/login"
+			if r.Method == "GET" && r.URL.Path != "/" && safeNext(r.URL.Path) != "" {
+				target += "?next=" + url.QueryEscape(r.URL.Path)
+			}
+			http.Redirect(w, r, target, http.StatusSeeOther)
 			return
 		}
 		if r.Method != "GET" && r.Method != "HEAD" {
@@ -133,7 +139,7 @@ func Handler(svc *core.Service, cfg Config) http.Handler {
 				return
 			}
 			s.page(w, "requests", 200, x, "", "")
-		case "/requests/approve", "/requests/deny":
+		case "/requests/approve", "/requests/deny", "/requests/deny-all":
 			s.requestAction(w, r, x)
 		case "/audit":
 			s.auditPage(w, r, x)
@@ -231,14 +237,14 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == "GET" {
 		if _, ok := s.sessions.get(r, true); ok {
-			http.Redirect(w, r, "/", 303)
+			http.Redirect(w, r, nextOrHome(r.URL.Query().Get("next")), 303)
 			return
 		}
 		x, ok := s.preauth(w, r)
 		if !ok {
 			return
 		}
-		s.render(w, "login", 200, pageData{Title: "Login", CSRF: x.csrf})
+		s.render(w, "login", 200, pageData{Title: "Login", CSRF: x.csrf, Next: safeNext(r.URL.Query().Get("next"))})
 		return
 	}
 	x, ok := s.sessions.get(r, false)
@@ -249,15 +255,16 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	if !checkCSRF(w, r, x) {
 		return
 	}
+	next := safeNext(r.PostForm.Get("next"))
 	pass, valid := passphrase(r)
 	if !valid {
-		s.render(w, "login", 400, pageData{Title: "Login", CSRF: x.csrf, Error: "Enter a passphrase of at most 4096 bytes."})
+		s.render(w, "login", 400, pageData{Title: "Login", CSRF: x.csrf, Next: next, Error: "Enter a passphrase of at most 4096 bytes."})
 		return
 	}
 	defer crypto.Zero(pass)
 	if err := s.svc.Verify(pass); err != nil {
 		status, message := authError(err)
-		s.render(w, "login", status, pageData{Title: "Login", CSRF: x.csrf, Error: message})
+		s.render(w, "login", status, pageData{Title: "Login", CSRF: x.csrf, Next: next, Error: message})
 		return
 	}
 	auth, err := s.sessions.create(true)
@@ -272,7 +279,28 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	s.cookie(w, preauthCookie, "", true)
 	s.cookie(w, sessionCookie, auth.id, false)
-	http.Redirect(w, r, "/", 303)
+	http.Redirect(w, r, nextOrHome(next), 303)
+}
+
+// nextPages are the pages a login may return to. The redirect target is
+// always one of these constants, never the submitted text.
+var nextPages = []string{"/", "/secrets", "/grants", "/requests", "/audit", "/unlock"}
+
+// safeNext returns the allow-listed page equal to p, or "".
+func safeNext(p string) string {
+	for _, page := range nextPages {
+		if p == page {
+			return page
+		}
+	}
+	return ""
+}
+
+func nextOrHome(p string) string {
+	if next := safeNext(p); next != "" {
+		return next
+	}
+	return "/"
 }
 
 func passphrase(r *http.Request) ([]byte, bool) {
