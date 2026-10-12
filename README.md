@@ -1,6 +1,6 @@
 # TokenCrypt
 
-Share encrypted secrets with a coding agent through time-limited grants. You manage secrets and approve access in the website; the agent uses `get`, `run`, `request`, `status` and `flag` through a private Unix socket.
+TokenCrypt gives a coding agent encrypted secrets for a limited time. You store secrets and approve access in a website. The agent calls `get`, `run`, `request`, `status` and `flag` over a private Unix socket.
 
 ## Build and install
 
@@ -13,18 +13,18 @@ toolchain/run env CGO_ENABLED=0 go build -o .local/tokencrypt ./cmd/tokencrypt
 install -Dm755 .local/tokencrypt "$HOME/.local/bin/tokencrypt"
 ```
 
-`toolchain/check` checks formatting, vet, race tests and the fake-secret end-to-end harness. [Verification evidence](docs/evidence.md) records observed results and pending device checks.
+`toolchain/check` runs formatting, vet, race tests and the fake-secret end-to-end harness. [Verification evidence](docs/evidence.md) lists the observed results.
 
-## Start the website
+## Run the website
 
 ```sh
 tokencrypt serve --allowed-hosts 127.0.0.1:8765,localhost:8765 \
   --approval-url http://127.0.0.1:8765
 ```
 
-Visit `http://127.0.0.1:8765` to choose and confirm your vault passphrase. For terminal initialization, run `tokencrypt init`; it reads the passphrase twice with terminal echo disabled. Passphrases never belong in command arguments or service environment variables.
+Open `http://127.0.0.1:8765` and set a vault passphrase. To initialize from a terminal, run `tokencrypt init`; it reads the passphrase twice with echo off. Never pass the passphrase as a command argument or service environment variable.
 
-The vault defaults to `$XDG_DATA_HOME/tokencrypt` (or `~/.local/share/tokencrypt`), audit state to `$XDG_STATE_HOME/tokencrypt` (or `~/.local/state/tokencrypt`), and the socket to `$XDG_RUNTIME_DIR/tokencrypt/sock`. Override these with `--vault-dir`, `--state-dir` and `--socket`. The CLI accepts `TOKENCRYPT_SOCKET` as a socket override.
+The vault lives in `$XDG_DATA_HOME/tokencrypt` (`~/.local/share/tokencrypt`), audit state in `$XDG_STATE_HOME/tokencrypt` (`~/.local/state/tokencrypt`) and the socket at `$XDG_RUNTIME_DIR/tokencrypt/sock`. Override them with `--vault-dir`, `--state-dir` and `--socket`. The CLI reads `TOKENCRYPT_SOCKET` as a socket override.
 
 To serve the website under a hostname through a reverse proxy on port 80, use:
 
@@ -34,9 +34,9 @@ tokencrypt serve --listen 127.0.0.1:8765 \
   --approval-url http://crypt.local
 ```
 
-The listener accepts loopback IP addresses. Allowed hosts must match the complete Host header, including a port when present. The reverse proxy forwards that Host header to the loopback listener. Plain-HTTP deployments use cookies without the Secure flag; `--secure-cookies` is available for an HTTPS deployment.
+The listener binds loopback addresses only. An allowed host must equal the full Host header, port included when present. The proxy forwards that header to the listener. Plain HTTP uses cookies without the Secure flag; add `--secure-cookies` for HTTPS.
 
-A user service can run that command with `Restart=always`, `UMask=0077` and `NoNewPrivileges=yes`. After installing its unit at `~/.config/systemd/user/tokencrypt.service`, run `systemctl --user daemon-reload` and `systemctl --user enable --now tokencrypt.service`. The first website visit initializes the production vault with your own passphrase.
+To run it as a user service, put the command in `~/.config/systemd/user/tokencrypt.service` with `Restart=always`, `UMask=0077` and `NoNewPrivileges=yes`. Then run `systemctl --user daemon-reload` and `systemctl --user enable --now tokencrypt.service`. The first website visit sets the vault passphrase.
 
 ## Agent commands
 
@@ -50,17 +50,26 @@ tokencrypt get api_token
 tokencrypt flag api_token --kind invalid --reason 'Service rejected this token'
 ```
 
-`get` prints the granted bytes. `run` supplies values through uppercase environment variables such as `API_TOKEN`. A flag revokes access and blocks another grant until you clear it through the website or update the value.
+`get` prints the granted bytes. `run` passes values as uppercase environment variables such as `API_TOKEN`. A flag revokes access and blocks new grants until you clear it in the website or update the value.
 
-Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in the daemon's environment; with both set, `serve` delivers notices from them, including while the vault is locked, and they take precedence over saved settings. For a systemd user unit, keep them in a file readable only by you (for example `~/.config/tokencrypt/telegram.env`, mode `0600`) and reference it with `EnvironmentFile=%h/.config/tokencrypt/telegram.env` in the unit's `[Service]` section. Surrounding whitespace is trimmed; if only one is set, the daemon writes a generic `notifier.failed` audit entry and uses the saved settings below.
+## Telegram notices
 
-Without those variables, save Telegram credentials on the notifier page with your vault passphrase. Delivery starts on save and daemon startup, including while the vault is locked. The daemon stores these service credentials outside vault encryption in `service/notifier.json` under your vault directory (directory `0700`, file `0600`); the page keeps them hidden. It shows when settings are missing or unreadable. If you have encrypted settings in `notifier.json` and no service file, one successful unlock migrates them. Configured service credentials take precedence.
+The daemon sends request notices to Telegram, including while the vault is locked. It reads the bot token and chat ID once at startup from one env file, `$XDG_CONFIG_HOME/tokencrypt/telegram.env` (`~/.config/tokencrypt/telegram.env`). Use `--env-file PATH` to choose another path.
 
-After a daemon restart, unlock and confirm the saved long grants you want to restore. Notification delivery grants no access; unlock alone does not confirm a saved grant.
+```sh
+TELEGRAM_BOT_TOKEN=123456:fake-token
+TELEGRAM_CHAT_ID=123456789
+```
 
-## HTTPS and test options
+Lines are `KEY=VALUE`. Blank lines and `#` comments are ignored, and quotes around a value are removed. Make the file a regular file you own with mode `0600`. The daemon refuses symlinks and files readable by group or others; it then leaves notices off and writes a `notifier.failed` audit entry without values. A missing file leaves notices off with no entry. A systemd unit needs no `EnvironmentFile`.
 
-For HTTPS, add the public hostname to `--allowed-hosts`, set `--secure-cookies` and use the HTTPS URL as `--approval-url`. TokenCrypt always requires the vault passphrase and ignores forwarded identity headers. `--telegram-api-base` selects a fake HTTP server for tests; production uses Telegram's API by default.
+Process environment variables are not read. To change the token, edit the file and restart the daemon.
+
+After a daemon restart, unlock and confirm each saved long grant you want back. A notice grants no access, and unlock alone confirms nothing.
+
+## HTTPS and tests
+
+For HTTPS, add the public hostname to `--allowed-hosts`, pass `--secure-cookies` and set `--approval-url` to the HTTPS URL. TokenCrypt ignores forwarded identity headers and always asks for the vault passphrase. `--telegram-api-base` points the notifier at a fake server in tests; it defaults to Telegram's API.
 
 - [Design](docs/design.md)
 - [Implementation plan](docs/implementation-plan.md)
