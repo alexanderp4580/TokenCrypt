@@ -278,12 +278,12 @@ func handler(s *core.Service) http.Handler {
 		case "/request":
 			var req core.Request
 			req, err = s.Request(in.Name, in.Reason, in.Duration)
-			if err == nil && in.Wait > 0 {
+			if err == nil && in.Wait > 0 && req.State == core.StatePending {
 				ctx, cancel := context.WithTimeout(r.Context(), in.Wait)
 				req, err = s.Wait(ctx, req.ID)
 				cancel()
 			}
-			if req.ID != "" {
+			if req.ID != "" || req.State == core.StateGranted {
 				out.Request = &req
 			}
 		}

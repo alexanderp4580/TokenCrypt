@@ -18,6 +18,8 @@ const (
 	StateApproved = "approved"
 	StateDenied   = "denied"
 	StateExpired  = "expired"
+	// StateGranted answers a request for a secret that already has a live grant. It is never stored.
+	StateGranted = "granted"
 )
 
 // maxFinished is how many ended requests are kept so Wait can still report
@@ -36,6 +38,8 @@ type Request struct {
 	Duration time.Duration
 	Created  time.Time
 	State    string
+	// Expires is when the live grant ends. It is set only when State is granted.
+	Expires time.Time
 }
 
 // entry is a Request with its expiry on both clocks and a channel closed when
@@ -147,8 +151,20 @@ func (s *Service) checkRequestLocked(id, name string) error {
 	return nil
 }
 
-// Request creates a pending request from the agent. A duration of zero or
-// less means the default; it is only a suggestion for the grant form.
+// grantedUntilLocked returns the end of the live grant of name that lasts longest.
+func (s *Service) grantedUntilLocked(name string) (time.Time, bool) {
+	var until time.Time
+	for _, g := range s.g.List() {
+		if g.Secret == name && g.Expires.After(until) {
+			until = g.Expires
+		}
+	}
+	return until, !until.IsZero()
+}
+
+// Request creates a pending request from the agent. A secret that already has a live grant gets
+// no request: nothing is stored, audited or announced, and the result has state granted.
+// A duration of zero or less means the default; it is only a suggestion for the grant form.
 func (s *Service) Request(name, reason string, d time.Duration) (Request, error) {
 	if !vault.ValidName(name) {
 		return Request{}, vault.ErrBadName
@@ -167,6 +183,9 @@ func (s *Service) Request(name, reason string, d time.Duration) (Request, error)
 	s.sweepLocked()
 	if _, err := s.usable(name); err != nil {
 		return Request{}, err
+	}
+	if expires, ok := s.grantedUntilLocked(name); ok {
+		return Request{Secret: name, State: StateGranted, Expires: expires}, nil
 	}
 	if len(s.sortedLocked(StatePending)) >= s.cfg.MaxPending {
 		return Request{}, ErrTooManyPending

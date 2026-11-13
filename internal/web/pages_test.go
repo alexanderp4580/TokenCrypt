@@ -387,6 +387,10 @@ func TestRequestApprovalDenialAndEscaping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	denied, err := svc.Request("fake_token", "fake deny reason", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
 	h := Handler(svc, Config{AllowedHosts: []string{"crypt.local"}, Clock: clk})
 	a, csrf := login(t, h)
 	w := request(h, "GET", "/requests", nil, a)
@@ -402,15 +406,11 @@ func TestRequestApprovalDenialAndEscaping(t *testing.T) {
 	if err != nil || done.State != core.StateApproved || len(svc.Status().Grants) != 1 {
 		t.Fatal("approval did not settle request", err)
 	}
-	r, err = svc.Request("fake_token", "fake deny reason", time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.Set("id", r.ID)
+	f.Set("id", denied.ID)
 	if w = request(h, "POST", "/requests/deny", f, a); w.Code != 303 {
 		t.Fatalf("deny: %d", w.Code)
 	}
-	done, err = svc.Wait(context.Background(), r.ID)
+	done, err = svc.Wait(context.Background(), denied.ID)
 	if err != nil || done.State != core.StateDenied {
 		t.Fatal("denial did not settle request", err)
 	}

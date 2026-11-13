@@ -520,9 +520,6 @@ func TestFlagRevokesDeniesBlocksAndReports(t *testing.T) {
 			e := newEnv(t)
 			e.create(secretName, canary)
 			e.create(secondName, "OTHER-"+canary)
-			e.grant(secretName, time.Hour)
-			e.grant(secretName, 48*time.Hour)
-			e.grant(secondName, time.Hour)
 			r1, err := e.svc.Request(secretName, "deploy", time.Hour)
 			if err != nil {
 				t.Fatal(err)
@@ -531,6 +528,9 @@ func TestFlagRevokesDeniesBlocksAndReports(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			e.grant(secretName, time.Hour)
+			e.grant(secretName, 48*time.Hour)
+			e.grant(secondName, time.Hour)
 			evs := e.svc.Events()
 			drain(evs)
 
@@ -1470,8 +1470,8 @@ func TestEventsDoNotBlockWhenNobodyReads(t *testing.T) {
 func TestCloseEndsEventsWaitsAndOperations(t *testing.T) {
 	e := newEnv(t)
 	e.create(secretName, canary)
-	e.grant(secretName, time.Hour)
 	r, _ := e.svc.Request(secretName, "r", time.Hour)
+	e.grant(secretName, time.Hour)
 	evs := e.svc.Events()
 	res := waitAsync(e.svc, r.ID)
 	time.Sleep(10 * time.Millisecond)
@@ -1495,4 +1495,87 @@ func TestCloseEndsEventsWaitsAndOperations(t *testing.T) {
 		t.Errorf("Verify after Close = %v", err)
 	}
 	e.svc.Close() // idempotent
+}
+
+func TestRequestForAGrantedSecretCreatesNothing(t *testing.T) {
+	e := newEnv(t)
+	e.create(secretName, canary)
+	g := e.grant(secretName, time.Hour)
+	evs := e.svc.Events()
+	r, err := e.svc.Request(secretName, "again", 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.State != StateGranted || r.ID != "" || r.Secret != secretName || !r.Expires.Equal(g.Expires) {
+		t.Errorf("request = %+v, want state granted, no id, expiry %v", r, g.Expires)
+	}
+	if p := e.pending(); len(p) != 0 {
+		t.Errorf("pending = %+v, want none", p)
+	}
+	if got := e.auditOf(audit.RequestCreated); len(got) != 0 {
+		t.Errorf("request.created events = %+v, want none", got)
+	}
+	select {
+	case ev := <-evs:
+		t.Errorf("event = %+v, want none", ev)
+	default:
+	}
+}
+
+func TestRequestForAGrantedSecretReportsTheLatestExpiry(t *testing.T) {
+	e := newEnv(t)
+	e.create(secretName, canary)
+	e.grant(secretName, time.Hour)
+	longer := e.grant(secretName, 3*time.Hour)
+	r, err := e.svc.Request(secretName, "x", 0)
+	if err != nil || r.State != StateGranted || !r.Expires.Equal(longer.Expires) {
+		t.Errorf("Request = %+v, %v; want granted until %v", r, err, longer.Expires)
+	}
+}
+
+func TestRequestForAnotherSecretStillCreatesARequest(t *testing.T) {
+	e := newEnv(t)
+	e.create(secretName, canary)
+	e.create(secondName, "OTHER-VALUE-1")
+	e.grant(secretName, time.Hour)
+	r, err := e.svc.Request(secondName, "x", time.Minute)
+	if err != nil || r.State != StatePending || r.ID == "" || !r.Expires.IsZero() {
+		t.Errorf("Request = %+v, %v; want a pending request", r, err)
+	}
+}
+
+func TestRequestAfterTheGrantEndsCreatesARequest(t *testing.T) {
+	e := newEnv(t)
+	e.create(secretName, canary)
+	g := e.grant(secretName, time.Hour)
+	e.clk.AdvanceWall(time.Hour + time.Second)
+	e.clk.AdvanceMono(time.Hour + time.Second)
+	r, err := e.svc.Request(secretName, "x", time.Minute)
+	if err != nil || r.State != StatePending || r.ID == "" {
+		t.Errorf("Request after expiry = %+v, %v; want pending", r, err)
+	}
+	e2 := newEnv(t)
+	e2.create(secretName, canary)
+	g2 := e2.grant(secretName, time.Hour)
+	if err := e2.svc.Revoke(g2.ID, "user"); err != nil {
+		t.Fatal(err)
+	}
+	r, err = e2.svc.Request(secretName, "x", time.Minute)
+	if err != nil || r.State != StatePending || r.ID == "" {
+		t.Errorf("Request after revoke = %+v, %v; want pending", r, err)
+	}
+	_ = g
+}
+
+func TestFlaggedSecretStillRefusesARequestDespiteAGrant(t *testing.T) {
+	e := newEnv(t)
+	e.create(secretName, canary)
+	e.grant(secretName, time.Hour)
+	if err := e.svc.Flag(secretName, "leaked", "seen in a log", "agent"); err != nil {
+		t.Fatal(err)
+	}
+	var flagged *FlaggedError
+	if _, err := e.svc.Request(secretName, "x", time.Minute); !errors.As(err, &flagged) {
+		t.Errorf("Request = %v, want FlaggedError", err)
+	}
 }

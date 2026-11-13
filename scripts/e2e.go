@@ -284,6 +284,19 @@ func run(binary string) {
 	h.post("/requests/approve", token, values("id", field(idPattern, body), "name", "alpha", "duration", "10m", "passphrase", fakePass), 303)
 	out, ok = h.cli("get", "alpha")
 	check(ok && out == updated, "web request approval grants CLI access")
+	out, ok = h.cli("request", "alpha", "--reason", "fake granted-again reason")
+	check(ok && strings.Contains(out, "granted") && !strings.Contains(out, "request id="), "CLI request for a granted secret prints granted")
+	check(strings.Contains(h.page("/requests"), "No pending requests"), "request for a granted secret creates no pending request")
+	time.Sleep(300 * time.Millisecond)
+	noticesMu.Lock()
+	again := false
+	for _, n := range notices {
+		if strings.Contains(n.Text, "fake granted-again reason") {
+			again = true
+		}
+	}
+	noticesMu.Unlock()
+	check(!again, "request for a granted secret sends no Telegram notice")
 	h.revoke(token)
 	_, ok = h.cli("request", "alpha", "--reason", "deny this fake request")
 	check(ok, "CLI creates request for denial")

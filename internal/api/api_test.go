@@ -501,3 +501,27 @@ func TestPeerCredentialFailureFailsClosed(t *testing.T) {
 		t.Fatal("credential lookup failure allowed access")
 	}
 }
+
+func TestRequestForAGrantedSecretReturnsGrantedWithoutWaiting(t *testing.T) {
+	s, _ := service(t)
+	path := filepath.Join(t.TempDir(), "sock")
+	start(t, s, path, peerUID)
+	c := client(t, path)
+	g, err := s.Grant("api_token", time.Hour, []byte(fakePass), "user", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, wait := range []time.Duration{0, 5 * time.Second} {
+		started := time.Now()
+		r, err := c.Request("api_token", "again", time.Minute, wait)
+		if err != nil || r.State != core.StateGranted || r.ID != "" || r.Secret != "api_token" || !r.Expires.Equal(g.Expires) {
+			t.Fatalf("wait %v: %+v %v", wait, r, err)
+		}
+		if time.Since(started) > 2*time.Second {
+			t.Fatalf("wait %v: the call waited", wait)
+		}
+	}
+	if st := s.Status(); len(st.Pending) != 0 {
+		t.Fatalf("pending = %+v, want none", st.Pending)
+	}
+}

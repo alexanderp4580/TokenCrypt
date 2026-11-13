@@ -54,6 +54,10 @@ func Run(args []string, stdout, stderr io.Writer, dial func() (*api.Client, erro
 		return runChild(c, client, stdout, stderr)
 	case "request":
 		r, err := client.Request(c.name, c.reason, c.duration, c.wait)
+		if err == nil && r.State == core.StateGranted {
+			printGranted(stdout, r)
+			break
+		}
 		if r.ID != "" {
 			printRequest(stdout, r)
 		}
@@ -221,6 +225,12 @@ func failed(stderr io.Writer, err error) int {
 
 func printRequest(out io.Writer, r core.Request) {
 	fmt.Fprintf(out, "request id=%q secret=%q state=%q duration=%s reason=%q created=%q\n", r.ID, r.Secret, r.State, r.Duration, r.Reason, stamp(r.Created))
+}
+
+// printGranted reports a request that was not sent because the secret already has a live grant.
+func printGranted(out io.Writer, r core.Request) {
+	left := max(time.Until(r.Expires), 0)
+	fmt.Fprintf(out, "granted secret=%q left=%s expires=%q\n", r.Secret, left.Round(time.Second), stamp(r.Expires))
 }
 
 func stamp(t time.Time) string {

@@ -154,6 +154,7 @@ Not protected:
 - With no grant, `get` and `run` fail; with a live grant, they return the value; after expiry or revoke, they fail again
 - Granting one secret does not make another readable
 - A wrong passphrase grants nothing and appears in the audit log
+- A request for a secret that already has a live grant creates nothing and sends no notice; the CLI prints `granted` with the expiry
 - A request from the CLI appears in the web UI and in Telegram with a configured env file, including after a locked daemon restart; Deny makes `get` fail
 - Create, update, rename and delete each need the passphrase; read shows metadata only
 - Update value and rename revoke a live grant; the new value is what `get` returns after the next grant

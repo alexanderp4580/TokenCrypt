@@ -11,6 +11,7 @@ Owns the agent CLI command runner.
 
 - Allow `get`, `run`, `request`, `status` and `flag`; validate arguments before dialing.
 - Return 0 for success, 1 for operation failure, 2 for usage or the child's exit status; signals use `128 + signal`.
+- `request` for a secret that already has a live grant sends no request: it prints `granted secret=... left=... expires=...` and returns 0.
 - `get` preserves bytes without adding a newline. `run` obtains all grants before launching the child and replaces matching uppercase variables.
 - Reject NUL or environment entries over 128 KiB including name, equals sign and final NUL; direct the caller to `get`.
 - `status` prints each secret’s `token_expires_on` as YYYY-MM-DD or Never, separate from a grant’s `expires` timestamp.

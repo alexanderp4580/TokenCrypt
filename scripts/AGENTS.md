@@ -13,6 +13,7 @@ Owns executable integration checks using temporary vaults and fake credentials.
 - Print PASS or FAIL assertion labels; keep credential values and daemon logs out of output.
 - Clean temporary files and daemon processes on success or failure.
 - Assert fake Telegram delivery from the env file, including after a locked process restart before login/unlock, with protected CLI reads denied. Scan vault files and the audit log for the bot token.
+- A request for an already granted secret prints `granted`, leaves no pending request and sends no Telegram notice.
 - Do not invoke `toolchain/check` from the harness.
 
 # Work Guidance

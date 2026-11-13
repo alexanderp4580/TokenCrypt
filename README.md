@@ -50,7 +50,7 @@ tokencrypt get api_token
 tokencrypt flag api_token --kind invalid --reason 'Service rejected this token'
 ```
 
-`get` prints the granted bytes. `run` passes values as uppercase environment variables such as `API_TOKEN`. A flag revokes access and blocks new grants until you clear it in the website or update the value.
+`request` for a secret that already has a live grant creates no request and sends no notice; it prints `granted` with the grant's expiry and exits 0. `get` prints the granted bytes. `run` passes values as uppercase environment variables such as `API_TOKEN`. A flag revokes access and blocks new grants until you clear it in the website or update the value.
 
 ## Telegram notices
 

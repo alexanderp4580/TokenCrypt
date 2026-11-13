@@ -26,7 +26,9 @@ type fakeAPI struct {
 	values  map[string][]byte
 	status  core.Status
 	timeout bool
-	socket  string
+	// grantedUntil makes /request answer that the secret already has a live grant.
+	grantedUntil time.Time
+	socket       string
 }
 
 func fakeServer(t *testing.T, values map[string][]byte) *fakeAPI {
@@ -73,6 +75,9 @@ func (f *fakeAPI) handle(w http.ResponseWriter, r *http.Request) {
 			state = core.StateApproved
 		}
 		req := core.Request{ID: "fake-request", Secret: in.Name, Reason: in.Reason, Duration: in.Duration, State: state}
+		if !f.grantedUntil.IsZero() {
+			req = core.Request{Secret: in.Name, State: core.StateGranted, Expires: f.grantedUntil}
+		}
 		out := map[string]any{"request": req}
 		if f.timeout {
 			w.WriteHeader(408)
@@ -303,4 +308,23 @@ func TestCommandHelper(t *testing.T) {
 
 func helperCommand(args ...string) []string {
 	return append([]string{os.Args[0], "-test.run=^TestCommandHelper$", "--"}, args...)
+}
+
+func TestRequestForAGrantedSecretSucceedsWithoutARequestLine(t *testing.T) {
+	f := fakeServer(t, nil)
+	f.mu.Lock()
+	f.grantedUntil = time.Date(2027, 2, 11, 17, 3, 21, 0, time.UTC)
+	f.mu.Unlock()
+	code, out, err := invoke(t, f, "request", "api_token", "--for", "1h", "--reason", "fake reason", "--wait", "1s")
+	if code != 0 || err != "" {
+		t.Fatalf("granted: %d %q %q", code, out, err)
+	}
+	for _, want := range []string{"granted", `secret="api_token"`, `expires="2027-02-11T17:03:21Z"`} {
+		if !bytes.Contains(out, []byte(want)) {
+			t.Errorf("output %q lacks %q", out, want)
+		}
+	}
+	if bytes.Contains(out, []byte("request id=")) {
+		t.Errorf("output %q reports a request", out)
+	}
 }
